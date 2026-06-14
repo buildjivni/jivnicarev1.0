@@ -1,0 +1,1 @@
+# JivniCare AI Instructions
