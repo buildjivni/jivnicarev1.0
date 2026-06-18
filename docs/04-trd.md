@@ -353,11 +353,12 @@ BIDIRECTIONAL ADVANCE:
     → Current token = COMPLETED
     → Next READY token = auto CALLED
 
-DOCTOR STATUS DISPLAY:
-  AVAILABLE → Normal profile (full color)
-  BREAK     → Subtle desaturated (20% gray overlay) + breakMessage
-  BUSY      → Normal color + "Queue Full" + Join Waitlist button
-  OFFLINE   → Desaturated profile (not B&W) + "Get Notified" button
+DOCTOR AVAILABILITY — 4-STATE GRANULAR MODEL:
+  - AVAILABLE: Automatic trigger when current time crosses clinicStartTime. Normal booking and queue flow.
+  - ON_BREAK / BUSY: Manual toggle by doctor/receptionist (temporary/same-day). Shows a calm inline breakMessage (e.g. "Doctor is on a short break — queue resumes shortly"). No active push notifications, no auto-cancellation, queue order is fully preserved.
+  - OFFLINE: Manual override by doctor/receptionist ("not coming in today"). Shows a clear offline banner on the tracking page, and sends a proactive push/in-app notification to all booked patients for today. No auto-cancellation—patients decide if they want to cancel.
+  - End-of-day Reset: Automatic, resets status to OFFLINE at 04:00 AM IST cron to allow the next day's schedule-based AVAILABLE trigger to fire.
+  - Daily Limit: When totalTokens >= dailyTokenLimit, the profile displays "Fully Booked for Today". The online booking button is disabled. This is independent of AVAILABLE/ON_BREAK/OFFLINE. If dailyLimit is reduced mid-day, existing booked tokens are never cancelled; walk-ins bypass the daily limit entirely.
 
 QUEUE CACHE:
   Redis key: queue:{queueId}

@@ -422,22 +422,25 @@ Doctor clicks status toggle on dashboard
 Bottom sheet / dropdown:
   🟢 Available — Accept new bookings
   🟡 On Break  — [Enter break message: "Back in 30 min"]
-  🟠 Queue Full — Stop new bookings
-  ⚫ Offline   — Clinic closed
+  ⚫ Offline   — Clinic closed for the day
 
-On BREAK selection:
+On AVAILABLE selection:
+  → availabilityStatus = AVAILABLE
+  → isAcceptingBookings = true (unless daily limit reached)
+
+On BREAK / BUSY selection:
+  → availabilityStatus = ON_BREAK
   → breakMessage saved
   → isAcceptingBookings = false
-  → Profile shows desaturated + break message
-  → Existing booked patients get push notification:
-    "Dr. [Name] is on a break. Your token is still valid."
+  → Profile shows calm inline break message. No auto-cancel, queue order preserved.
 
-On OFFLINE selection:
-  → currentStatus = OFFLINE
+On OFFLINE selection (manual override / end-of-day reset):
+  → availabilityStatus = OFFLINE
   → isAcceptingBookings = false
-  → Profile desaturated
-  → New bookings blocked
-  → Profile still visible (patients can still discover)
+  → Patient tracking page displays offline banner
+  → Proactive push/in-app notification sent to all patients with today's bookings.
+  → No auto-cancel — patients decide whether to cancel.
+  → Profile remains visible for public discovery.
 ```
 
 ### Flow D6 — QR Sticker Download
@@ -551,7 +554,7 @@ System executes in order:
   1. verificationStatus = SUSPENDED
   2. canShowOnPublic = false
   3. isAcceptingBookings = false
-  4. currentStatus = OFFLINE
+  4. availabilityStatus = OFFLINE
   5. Delete all auth sessions
   6. Show active tokens to admin
         ↓
@@ -607,7 +610,7 @@ Step 2: Find all ACTIVE daily_queues
         with date < today's logical date
         → Update status to CLOSED
 
-Step 3: Find all doctors with currentStatus != OFFLINE
+Step 3: Find all doctors with availabilityStatus != OFFLINE
         → Reset to OFFLINE
 
 Step 4: Update stats:

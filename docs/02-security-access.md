@@ -663,7 +663,7 @@ Execute in this exact order when admin bans a doctor:
 1. doctor.verificationStatus = SUSPENDED
 2. doctor.canShowOnPublic    = false
 3. doctor.isAcceptingBookings = false
-4. doctor.currentStatus      = OFFLINE
+4. doctor.availabilityStatus = OFFLINE
 5. Delete all doctor auth_sessions
 6. Keep active QueueTokens — admin decides cancel/transfer/close
 7. Create AuditLog (action: BAN)

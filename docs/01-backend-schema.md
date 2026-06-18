@@ -86,10 +86,9 @@ enum VerificationStatus {
   SUSPENDED
 }
 
-enum DoctorStatus {
+enum AvailabilityStatus {
   AVAILABLE
-  BREAK
-  BUSY
+  ON_BREAK
   OFFLINE
 }
 
@@ -300,7 +299,9 @@ model Doctor {
   // Queue Settings
   dailyTokenLimit         Int                @default(30)
   consultationFee         Int                @default(0)
-  currentStatus           DoctorStatus       @default(OFFLINE)
+  availabilityStatus      AvailabilityStatus @default(OFFLINE)
+  clinicStartTime         String?            // "09:00" — drives auto AVAILABLE trigger
+  clinicEndTime           String?            // "17:00" — drives auto OFFLINE trigger
   isAcceptingBookings     Boolean            @default(false)
   breakMessage            String?            // "Back in 30 minutes"
   canShowOnPublic         Boolean            @default(false)
@@ -331,7 +332,7 @@ model Doctor {
   @@index([clinicDistrict])
   @@index([clinicCity])
   @@index([verificationStatus])
-  @@index([currentStatus])
+  @@index([availabilityStatus])
   @@index([canShowOnPublic])
   @@index([partnerTier])
   @@map("doctors")
