@@ -330,6 +330,13 @@ Regular Queue:   tokenNumber = 1, 2, 3...
 Emergency Queue: tokenNumber = E1, E2, E3... (separate DailyQueue)
 Walk-in tokens:  Same regular sequence, type=WALKIN badge on dashboard
 
+WALK-IN AUTO-LINKING:
+  When a walk-in patient is created, the system performs a silent server-side lookup:
+  `SELECT id FROM users WHERE phone = ? AND role = 'PATIENT'`
+  - If a registered patient matches the phone number, QueueToken.patientId is automatically linked to that user.
+  - If not matched, patientId remains null (anonymous walk-in).
+  - Note: There is zero UI or workflow change for the doctor or receptionist. The walk-in form remains a simple name, phone number, and address field. The auto-linking occurs silently in the service layer.
+
 ATOMIC BOOKING (race condition prevention):
   Use Prisma $transaction with:
   1. SELECT daily_queues WHERE doctorId + date + type FOR UPDATE
