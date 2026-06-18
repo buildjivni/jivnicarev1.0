@@ -383,7 +383,7 @@ Admin pricing control:
   perBookingFee:   ₹29    (display)
   discountPercent: 100%   (Early Partner — actual charge = ₹0)
   partnerTier:     EARLY_PARTNER
-  freeUntil:       31 Dec 2026
+  freeUntil:       31 Dec 2026 (Note: subscription-expiry enforcement, locking, or downgrade logic is explicitly deferred to V2)
 
 Early Partner Program:
   First 20 verified doctors
