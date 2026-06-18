@@ -18,6 +18,15 @@ export class BookingService {
     idempotencyKey: string,
     patientId: string // The logged-in patient's User ID
   ) {
+    // Check if patient is banned or inactive
+    const user = await prisma.user.findUnique({ where: { id: patientId } });
+    if (!user) {
+      throw new Error("User not found.");
+    }
+    if (user.isBanned || !user.isActive) {
+      throw new Error("PATIENT_SUSPENDED");
+    }
+
     // 1. Resolve logical date
     const logicalDate = getLogicalDate(date);
 
@@ -225,6 +234,7 @@ export class BookingService {
     const token = await prisma.queueToken.findUnique({
       where: { id: tokenId },
       include: {
+        patient: true,
         queue: {
           include: {
             doctor: true,
@@ -235,6 +245,10 @@ export class BookingService {
 
     if (!token) {
       throw new Error("Booking token not found.");
+    }
+
+    if (token.patient && (token.patient.isBanned || !token.patient.isActive)) {
+      throw new Error("PATIENT_SUSPENDED");
     }
 
     if (patientId && token.patientId !== patientId) {
@@ -346,11 +360,23 @@ export class BookingService {
     });
 
     if (!dailyQueue || dailyQueue.status === QueueStatus.CLOSED) return;
+
+    // Lock the DailyQueue row to prevent race conditions on capacity and token numbers
+    await tx.$queryRaw`
+      SELECT id FROM "daily_queues" WHERE id = ${dailyQueue.id} FOR UPDATE
+    `;
+
+    // Fetch fresh DailyQueue state after lock is acquired
+    const lockedQueue = await tx.dailyQueue.findUnique({
+      where: { id: dailyQueue.id },
+    });
+
+    if (!lockedQueue || lockedQueue.status === QueueStatus.CLOSED) return;
     
     // Count active tokens to check if space is available
     const activeTokensCount = await tx.queueToken.count({
       where: {
-        queueId: dailyQueue.id,
+        queueId: lockedQueue.id,
         status: {
           in: [
             TokenStatus.BOOKED,
@@ -364,7 +390,7 @@ export class BookingService {
       },
     });
 
-    if (activeTokensCount >= dailyQueue.dailyLimit) return;
+    if (activeTokensCount >= lockedQueue.dailyLimit) return;
 
     // 2. Find the oldest waitlist entry
     const oldestWaitlist = await tx.waitlist.findFirst({
@@ -417,7 +443,7 @@ export class BookingService {
           ],
         },
         queue: {
-          id: dailyQueue.id,
+          id: lockedQueue.id,
         },
       },
     });
@@ -425,9 +451,9 @@ export class BookingService {
     if (activeBookingCount >= 3) return; // Skip if they already booked 3
 
     // 6. Increment queue count
-    const newTokenNumber = dailyQueue.totalTokens + 1;
+    const newTokenNumber = lockedQueue.totalTokens + 1;
     await tx.dailyQueue.update({
-      where: { id: dailyQueue.id },
+      where: { id: lockedQueue.id },
       data: {
         totalTokens: newTokenNumber,
       },
@@ -436,7 +462,7 @@ export class BookingService {
     // 7. Auto-book the slot
     const token = await tx.queueToken.create({
       data: {
-        queueId: dailyQueue.id,
+        queueId: lockedQueue.id,
         patientId: user.id,
         tokenNumber: newTokenNumber,
         status: TokenStatus.BOOKED,
@@ -446,7 +472,7 @@ export class BookingService {
     });
 
     // Invalidate queue cache
-    await redis.del(`queue:${dailyQueue.id}`).catch(() => {});
+    await redis.del(`queue:${lockedQueue.id}`).catch(() => {});
 
     // Send dispatch notification
     const doctor = await tx.doctor.findUnique({ where: { id: doctorId } });

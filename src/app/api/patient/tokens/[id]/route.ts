@@ -129,6 +129,9 @@ export async function DELETE(
     console.error("token cancel error:", error);
     Sentry.captureException(error);
     
+    if (error.message === "PATIENT_SUSPENDED") {
+      return apiError("Account suspended.", 403);
+    }
     if (error.message === "INVALID_STATE") {
       return apiError(ERRORS.INVALID_STATE, 400);
     }

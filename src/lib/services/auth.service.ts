@@ -8,6 +8,7 @@ import crypto from "crypto";
 const OTP_KEY = (p: string) => `otp:${p}`;
 const ATTEMPT_KEY = (p: string) => `otp_att:${p}`;
 const BLOCK_KEY = (p: string) => `otp_blocked:${p}`;
+const COOLDOWN_KEY = (p: string) => `otp_cooldown:${p}`;
 
 // Helper to check if Redis is working
 async function isRedisHealthy(): Promise<boolean> {
@@ -51,6 +52,32 @@ export async function generateOTP(phone: string) {
       } else {
         // Block expired, clean it up
         await prisma.rateLimitLog.delete({ where: { id: blockLog.id } }).catch(() => {});
+      }
+    }
+  }
+
+  // 1.5. Check resend cooldown (25s)
+  if (redisHealthy) {
+    const hasCooldown = await redis.get<string>(COOLDOWN_KEY(phoneHash));
+    if (hasCooldown) {
+      const ttl = await redis.ttl(COOLDOWN_KEY(phoneHash));
+      return { success: false, message: "Please wait 25 seconds before requesting another OTP.", retryAfter: ttl > 0 ? ttl : 25 };
+    }
+  } else {
+    // DB Fallback cooldown check
+    const cooldownLog = await prisma.rateLimitLog.findFirst({
+      where: {
+        identifier: phoneHash,
+        type: "PHONE_OTP_COOLDOWN",
+      },
+    });
+    if (cooldownLog) {
+      const elapsed = Math.floor((Date.now() - cooldownLog.windowStart.getTime()) / 1000);
+      const remaining = 25 - elapsed;
+      if (remaining > 0) {
+        return { success: false, message: "Please wait 25 seconds before requesting another OTP.", retryAfter: remaining };
+      } else {
+        await prisma.rateLimitLog.delete({ where: { id: cooldownLog.id } }).catch(() => {});
       }
     }
   }
@@ -140,11 +167,29 @@ export async function generateOTP(phone: string) {
   // 5. Send via 2Factor.in with 2-attempt silent-fail retry
   await sendOTP(phone, otp);
 
-  // 6. Increment attempt counter (for rate limiting next request)
+  // 6. Increment attempt counter (for rate limiting next request) and set cooldown
   if (redisHealthy) {
+    await redis.set(COOLDOWN_KEY(phoneHash), "1", { ex: 25 });
     await redis.incr(ATTEMPT_KEY(phoneHash));
     await redis.expire(ATTEMPT_KEY(phoneHash), 900);
   } else {
+    // Set DB cooldown
+    await prisma.rateLimitLog.upsert({
+      where: {
+        identifier_type: {
+          identifier: phoneHash,
+          type: "PHONE_OTP_COOLDOWN",
+        },
+      },
+      update: { windowStart: new Date() },
+      create: {
+        identifier: phoneHash,
+        type: "PHONE_OTP_COOLDOWN",
+        count: 1,
+        windowStart: new Date(),
+      },
+    });
+
     await prisma.rateLimitLog.upsert({
       where: {
         identifier_type: {

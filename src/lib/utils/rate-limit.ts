@@ -29,23 +29,32 @@ export async function applyRateLimit(
   request: NextRequest,
   limiter: Ratelimit
 ): Promise<NextResponse | null> {
-  const ip =
-    request.ip ?? request.headers.get("x-forwarded-for") ?? "anonymous";
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+    // Fail-open if Redis is not configured
+    return null;
+  }
 
-  const { success, limit, remaining, reset } = await limiter.limit(ip);
+  try {
+    const ip =
+      request.ip ?? request.headers.get("x-forwarded-for") ?? "anonymous";
 
-  if (!success) {
-    return NextResponse.json(
-      { success: false, error: "Too many requests. Please slow down." },
-      {
-        status: 429,
-        headers: {
-          "X-RateLimit-Limit": limit.toString(),
-          "X-RateLimit-Remaining": remaining.toString(),
-          "X-RateLimit-Reset": reset.toString(),
-        },
-      }
-    );
+    const { success, limit, remaining, reset } = await limiter.limit(ip);
+
+    if (!success) {
+      return NextResponse.json(
+        { success: false, error: "Too many requests. Please slow down." },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": limit.toString(),
+            "X-RateLimit-Remaining": remaining.toString(),
+            "X-RateLimit-Reset": reset.toString(),
+          },
+        }
+      );
+    }
+  } catch (err) {
+    console.error("Rate limiting failed, failing open:", err);
   }
   return null;
 }

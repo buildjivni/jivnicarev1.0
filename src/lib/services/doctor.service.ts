@@ -31,6 +31,14 @@ export class DoctorService {
    * multi-step registration (4 steps total)
    */
   async register(userId: string, step: number, payload: any) {
+    const userRecord = await prisma.user.findUnique({ where: { id: userId } });
+    if (!userRecord) {
+      throw new Error("User not found.");
+    }
+    if (userRecord.isBanned || !userRecord.isActive) {
+      throw new Error("DOCTOR_SUSPENDED");
+    }
+
     let doctor = await prisma.doctor.findUnique({
       where: { userId },
     });
@@ -169,8 +177,14 @@ export class DoctorService {
    * Resets isAcceptingBookings and triggers patient notification if going offline.
    */
   async updateStatus(doctorId: string, status: AvailabilityStatus, breakMessage?: string) {
-    const doctor = await prisma.doctor.findUnique({ where: { id: doctorId } });
+    const doctor = await prisma.doctor.findUnique({ 
+      where: { id: doctorId },
+      include: { user: true }
+    });
     if (!doctor) throw new Error("Doctor not found.");
+    if (doctor.user.isBanned || !doctor.user.isActive) {
+      throw new Error("DOCTOR_SUSPENDED");
+    }
 
     const updatedDoctor = await prisma.$transaction(async (tx) => {
       // 1. Update doctor status
@@ -245,6 +259,15 @@ export class DoctorService {
    * Updates weekly schedule
    */
   async updateSchedule(doctorId: string, schedule: any) {
+    const doctor = await prisma.doctor.findUnique({ 
+      where: { id: doctorId },
+      include: { user: true }
+    });
+    if (!doctor) throw new Error("Doctor not found.");
+    if (doctor.user.isBanned || !doctor.user.isActive) {
+      throw new Error("DOCTOR_SUSPENDED");
+    }
+
     const doc = await prisma.doctor.update({
       where: { id: doctorId },
       data: {

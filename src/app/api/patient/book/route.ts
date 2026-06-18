@@ -37,6 +37,9 @@ export async function POST(request: NextRequest) {
     Sentry.captureException(error);
 
     // Map specific service exceptions to standard error responses
+    if (error.message === "PATIENT_SUSPENDED") {
+      return apiError("Account suspended.", 403);
+    }
     if (error.message === "BOOKING_LIMIT_EXCEEDED") {
       return apiError(ERRORS.BOOKING_LIMIT, 400);
     }

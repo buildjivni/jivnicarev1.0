@@ -80,6 +80,13 @@ export class QueueService {
    * Enforces State Machine transitions & invalidates cache
    */
   async transition(tokenId: string, fromStatus: TokenStatus, toStatus: TokenStatus, operatorId?: string) {
+    if (operatorId) {
+      const operator = await prisma.user.findUnique({ where: { id: operatorId } });
+      if (!operator || operator.isBanned || !operator.isActive) {
+        throw new Error("OPERATOR_SUSPENDED");
+      }
+    }
+
     const token = await prisma.queueToken.findUnique({
       where: { id: tokenId },
       include: {
@@ -146,6 +153,13 @@ export class QueueService {
    * Bidirectional Advance logic: CALL_NEXT or COMPLETE
    */
   async advance(queueId: string, action: "CALL_NEXT" | "COMPLETE", operatorId?: string) {
+    if (operatorId) {
+      const operator = await prisma.user.findUnique({ where: { id: operatorId } });
+      if (!operator || operator.isBanned || !operator.isActive) {
+        throw new Error("OPERATOR_SUSPENDED");
+      }
+    }
+
     const queue = await prisma.dailyQueue.findUnique({
       where: { id: queueId },
       include: {
@@ -296,6 +310,13 @@ export class QueueService {
     address: string,
     operatorId?: string
   ) {
+    if (operatorId) {
+      const operator = await prisma.user.findUnique({ where: { id: operatorId } });
+      if (!operator || operator.isBanned || !operator.isActive) {
+        throw new Error("OPERATOR_SUSPENDED");
+      }
+    }
+
     const logicalDate = getLogicalDate(date);
 
     // 1. Fetch doctor details
