@@ -20,7 +20,7 @@ Framework:    Next.js 14 App Router + TypeScript strict
 Database:     PostgreSQL on Neon.tech
 ORM:          Prisma 5.x
 Cache:        Upstash Redis
-Auth:         OTP + JWT (jose) + httpOnly cookie + Admin TOTP
+Auth:         Patient: OTP | Doctor/Admin: Google OAuth + Admin TOTP (jose + NextAuth.js)
 SMS:          2Factor.in (no DLT needed — India-optimized OTP provider)
 Email:        Resend.dev
 Files:        Cloudinary (signed uploads)
@@ -164,7 +164,7 @@ JWT:      httpOnly cookie ONLY
           NEVER: localStorage, sessionStorage, Zustand
           Expiry: 7 days
 
-Admin:    OTP login + TOTP (Google Authenticator) mandatory
+Admin:    Google OAuth login + TOTP (Google Authenticator) mandatory
           NO TOTP bypass — ever
 ```
 

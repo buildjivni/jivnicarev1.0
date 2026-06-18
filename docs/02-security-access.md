@@ -492,8 +492,7 @@ const PUBLIC = [
   '/login',
   '/doctors',
   '/api/public',
-  '/api/auth/send-otp',
-  '/api/auth/verify-otp',
+  '/api/auth', // Allows all NextAuth callback/signin routes and OTP endpoints
   '/api/health',
 ]
 
@@ -641,10 +640,16 @@ export async function POST(req: Request) {
   if (!body.success) return apiError('Invalid input', 400)
 
   const admin = await prisma.user.create({
-    data: { phone: body.data.phone, name: body.data.name, role: 'ADMIN' },
+    data: {
+      phone: body.data.phone,
+      name: body.data.name,
+      role: 'ADMIN',
+      authProvider: 'GOOGLE_OAUTH',
+      status: 'PENDING_SETUP',
+    },
   })
 
-  return apiSuccess({ message: 'Admin created. Login via OTP.', id: admin.id })
+  return apiSuccess({ message: 'Admin created. Link Google account and set up TOTP.', id: admin.id })
 }
 ```
 

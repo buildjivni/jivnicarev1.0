@@ -39,7 +39,7 @@ Framework:     Next.js 14 (App Router) + TypeScript strict mode
 Database:      PostgreSQL on Neon.tech
 ORM:           Prisma 5.x
 Cache:         Upstash Redis
-Auth:          OTP + JWT (jose) + httpOnly cookie
+Auth:          Patient: Phone OTP (2Factor.in) | Doctor/Admin: Google OAuth + NextAuth.js (Plus Admin TOTP 2FA)
 Admin 2FA:     TOTP (otpauth)
 File Upload:   Cloudinary (signed uploads)
 OTP SMS:       2Factor.in (no DLT needed — OTP-specific India provider)
@@ -238,6 +238,21 @@ Layer 4 — Data (src/lib/prisma.ts + redis.ts)
   → DB clients only
   → No logic
 ```
+
+---
+
+## 4.1 AUTHENTICATION MODEL
+
+- **Patient:** Phone OTP only (via 2Factor.in) for signup and every login. No password.
+- **Doctor & Admin — Two-Stage Model:**
+  - **Registration (One-time):** Phone number verified via **2Factor.in OTP** (for identity verification and SMS reminders).
+  - **Login (Every time after registration):** **Google OAuth ("Sign in with Google")** implemented via NextAuth.js / Auth.js. No passwords or forgot-password flows.
+  - **Account Linking:** Google account is linked in Step 2 of registration to capture the email and Google ID.
+- **Admin-invited Admin Onboarding:**
+  - Existing admin invites new admin via phone number.
+  - System sends 2Factor.in OTP to verify identity.
+  - New admin completes Google OAuth linking + TOTP setup.
+  - Status is `PENDING_SETUP` until both Google-linking and TOTP are complete.
 
 ---
 

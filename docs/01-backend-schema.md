@@ -68,6 +68,16 @@ enum Role {
   ADMIN
 }
 
+enum AuthProvider {
+  PATIENT_OTP
+  GOOGLE_OAUTH
+}
+
+enum UserStatus {
+  ACTIVE
+  PENDING_SETUP
+}
+
 enum VerificationStatus {
   PENDING_ACTIVATION
   PENDING_REVIEW
@@ -169,13 +179,16 @@ enum Gender {
 ### Table 1: users
 ```prisma
 model User {
-  id            String    @id @default(uuid())
-  phone         String    @unique
+  id            String       @id @default(uuid())
+  phone         String       @unique
   name          String?
-  email         String?   @unique
-  role          Role      @default(PATIENT)
-  isActive      Boolean   @default(true)
-  isBanned      Boolean   @default(false)
+  email         String?      @unique
+  role          Role         @default(PATIENT)
+  googleId      String?      @unique
+  authProvider  AuthProvider @default(PATIENT_OTP)
+  status        UserStatus   @default(ACTIVE)
+  isActive      Boolean      @default(true)
+  isBanned      Boolean      @default(false)
   bannedAt      DateTime?
   bannedReason  String?
   deletedAt     DateTime?
