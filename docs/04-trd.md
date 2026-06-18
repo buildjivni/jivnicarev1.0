@@ -32,7 +32,7 @@ Admin:        jivnicare.com/admin
 
 ---
 
-## 2. COMPLETE TECH STACK
+## 2. TARGET TECH STACK (Intended Design — Not Yet Fully Implemented)
 
 ```
 Framework:     Next.js 14 (App Router) + TypeScript strict mode

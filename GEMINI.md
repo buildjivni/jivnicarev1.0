@@ -13,29 +13,14 @@ Domain: jivnicare.com | Admin: jivnicare.com/admin
 
 ---
 
-## COMPLETE TECH STACK
+## CURRENT BUILD STATUS & IMPLEMENTED STACK
 
-```
-Framework:    Next.js 14 App Router + TypeScript strict
-Database:     PostgreSQL on Neon.tech
-ORM:          Prisma 5.x
-Cache:        Upstash Redis
-Auth:         Patient: OTP | Doctor/Admin: Google OAuth + Admin TOTP (jose + NextAuth.js)
-SMS:          2Factor.in (no DLT needed — India-optimized OTP provider)
-Email:        Resend.dev
-Files:        Cloudinary (signed uploads)
-Search:       PostgreSQL FTS + in-memory scoring (NO Elasticsearch)
-QR/PDF:       @react-pdf/renderer + qrcode.react
-Errors:       Sentry
-Hosting:      Vercel (free tier)
-CI/CD:        GitHub → main → Vercel auto deploy
-PWA:          manifest.json + service worker
-UI:           Tailwind CSS + Shadcn/ui + Lucide React
-Fonts:        Poppins (display) + Inter (body) + Noto Sans Devanagari (Hindi)
-State:        React Context only (NO Zustand in V1)
-Validation:   Zod (every API route — mandatory)
-Rate Limit:   @upstash/ratelimit
-```
+As of June 18, 2026, the codebase is in a pre-implementation state:
+- **Framework & Tooling:** TypeScript and tsx are configured for development. No Next.js 14 App Router, Tailwind CSS, Shadcn/ui, or Lucide React dependencies are installed or initialized yet in the project directory.
+- **Database ORM:** Prisma ORM 5.x is configured with PostgreSQL. The schema has been verified and compiled successfully.
+- **Implemented Database Models:** `users`, `doctors`, `daily_queues`, `queue_tokens`, `platform_pricing`, `notifications`, `audit_logs`, `archived_records`, `waitlists`, `doctor_requests`, `search_logs`, `districts`, `specialities`, `admins`, `backup_codes`, `rate_limit_logs`, and `consent_logs` are fully defined in `prisma/schema.prisma`.
+- **Database Seeding:** Speciality configurations and active districts (Jamui, Deoghar) are successfully set up in `prisma/seed.ts`.
+- **Application Logic & Services:** No Next.js API routes, frontend components, or backend service classes (`src/` directory) have been written yet.
 
 ---
 

@@ -365,7 +365,18 @@ model DailyQueue {
   @@index([type])
   @@map("daily_queues")
 }
-```
+
+### Canonical Logical Date Timezone Rule
+To maintain consistent logical date tracking across the client, server, and database, all timestamp checks must resolve the target logical date using the following formula:
+1. Convert the system UTC timestamp to Indian Standard Time (IST, UTC+5:30).
+2. Extract the local IST date and time.
+3. If the local IST time is strictly before 04:00 AM (04:00):
+     `logical_date = IST_date - 1 day`
+   Else:
+     `logical_date = IST_date`
+4. The database stores `DailyQueue.date` at midnight UTC of this computed `logical_date` (i.e., `logical_dateT00:00:00.000Z`).
+
+---
 
 ### Table 5: queue_tokens
 ```prisma
@@ -652,17 +663,7 @@ model ConsentLog {
 
 ## STEP 5 — PostgreSQL Sequence for JVC001
 
-Run after first migration:
-```sql
-CREATE SEQUENCE doctor_jvc_seq START 1;
-
-CREATE OR REPLACE FUNCTION generate_doctor_id()
-RETURNS TEXT AS $$
-BEGIN
-  RETURN 'JVC' || LPAD(nextval('doctor_jvc_seq')::TEXT, 3, '0');
-END;
-$$ LANGUAGE plpgsql;
-```
+For the raw SQL sequence and function definition scripts, see the canonical database migration strategy section in docs/10-deployment-devops.md.
 
 Usage in application (NOT DB trigger):
 ```typescript
@@ -716,6 +717,17 @@ const specialities = [
   { name: 'Radiologist',         icon: '📡', tier: 3, sortOrder: 20 },
 ]
 ```
+
+### V1 Minimum Seed Data Requirements
+In addition to the static Districts and Specialities metadata, the seed script must insert a single Admin record to allow initial bootstrap and access:
+1. **Admin Record:**
+   - Model: `Admin`
+   - Fields:
+     - `email`: `"admin@jivnicare.com"` (Or the designated Google account email for platform administration)
+     - `name`: `"System Administrator"`
+     - `totpEnabled`: `false` (Forces TOTP setup on first Google OAuth login)
+     - `totpSecret`: `""` (Empty string or placeholder, populated during first-time TOTP setup)
+2. **Backlog Implementation Note:** The actual database seeding script `prisma/seed.ts` does not yet contain this admin seeding logic. Adding the Admin upsert code to the seed script is tracked as an implementation backlog item.
 
 ---
 

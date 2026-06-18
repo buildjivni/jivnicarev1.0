@@ -90,7 +90,33 @@ Automatic Deploy to Vercel (Preview / Production)
 
 ---
 
-## 7. ROLLBACK PROCESS
+## 7. DATABASE MIGRATION STRATEGY FOR CUSTOM SQL SEQUENCE
+
+Since Prisma's declarative migration engine (`prisma migrate dev`) does not natively generate migrations for custom database sequences or functions (like the `doctor_jvc_seq` sequence and `generate_doctor_id()` helper function defined in the backend schema), the deploy pipeline must use a custom execution strategy:
+1. **Script Generation:** The raw SQL definitions for sequences and functions must be stored in a dedicated SQL migration file:
+   ```sql
+   -- prisma/migrations/00_custom_sequence.sql
+   CREATE SEQUENCE IF NOT EXISTS doctor_jvc_seq START 1;
+   
+   CREATE OR REPLACE FUNCTION generate_doctor_id()
+   RETURNS TEXT AS $$
+   BEGIN
+     RETURN 'JVC' || LPAD(nextval('doctor_jvc_seq')::TEXT, 3, '0');
+   END;
+   $$ LANGUAGE plpgsql;
+   ```
+2. **CI/CD Deploy Pipeline:** The deployment script must execute this raw SQL file *before* executing standard Prisma migrations to prevent schema mismatches:
+   ```bash
+   # 1. Execute custom raw SQL sequence definitions
+   npx prisma db execute --file ./prisma/migrations/00_custom_sequence.sql --schema ./prisma/schema.prisma
+   
+   # 2. Run standard Prisma migrations
+   npx prisma migrate deploy
+   ```
+
+---
+
+## 8. ROLLBACK PROCESS
 
 - **Vercel Promotion:** In the event of a critical production bug, the immediate remediation step is to promote the last known stable Vercel deployment to production via the Vercel console.
 - **Database Rollback:** If the rollback involves database schema changes, the database state must be restored using Neon's Point-in-Time Recovery branch-restore feature to the timestamp immediately preceding the deployment.
@@ -99,3 +125,4 @@ Automatic Deploy to Vercel (Preview / Production)
 
 Document complete. Everything in this file is V1 scope.
 Last updated: June 2026 | JivniCare V1.0.0
+

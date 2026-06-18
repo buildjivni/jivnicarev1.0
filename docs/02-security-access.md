@@ -230,9 +230,7 @@ export const ERRORS = {
 Create src/lib/utils/logical-date.ts:
 
 ```typescript
-// JivniCare logical day boundary = 04:00 AM IST
-// Before 04:00 AM → previous calendar date
-// After  04:00 AM → current calendar date
+// See logical date timezone formula in docs/01-backend-schema.md (Canonical Source of Truth)
 
 export function getLogicalDate(now = new Date()): Date {
   const IST_OFFSET = 5.5 * 60 * 60 * 1000
