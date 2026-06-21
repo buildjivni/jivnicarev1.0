@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { sendOtpSchema } from "@/lib/schemas/auth.schema";
-import { generateOTP } from "@/lib/services/auth.service";
+import { generateOTP, verifyIpRateLimit } from "@/lib/services/auth.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import * as Sentry from "@sentry/nextjs";
 
@@ -61,41 +60,10 @@ export async function POST(request: NextRequest) {
       return apiError("Bot detection challenge failed. Please try again.", 400);
     }
 
-    // 3. Per-IP Rate Limiting (Max 10 per hour)
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const ipLog = await prisma.rateLimitLog.findUnique({
-      where: {
-        identifier_type: {
-          identifier: ip,
-          type: "IP_OTP",
-        },
-      },
-    });
-
-    if (ipLog) {
-      if (ipLog.windowStart > oneHourAgo) {
-        if (ipLog.count >= 10) {
-          return apiError(ERRORS.RATE_LIMITED, 429);
-        }
-        await prisma.rateLimitLog.update({
-          where: { id: ipLog.id },
-          data: { count: { increment: 1 } },
-        });
-      } else {
-        await prisma.rateLimitLog.update({
-          where: { id: ipLog.id },
-          data: { count: 1, windowStart: new Date() },
-        });
-      }
-    } else {
-      await prisma.rateLimitLog.create({
-        data: {
-          identifier: ip,
-          type: "IP_OTP",
-          count: 1,
-          windowStart: new Date(),
-        },
-      });
+    // 3. Per-IP Rate Limiting (Max 10 per hour) via Service
+    const isIpAllowed = await verifyIpRateLimit(ip);
+    if (!isIpAllowed) {
+      return apiError(ERRORS.RATE_LIMITED, 429);
     }
 
     // 4. Generate and send OTP (handles per-phone rate limit and storage fallback)

@@ -1,23 +1,20 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Stethoscope,
-  MapPin,
-  User,
-  Calendar,
   Check,
   Loader2,
-  Plus,
   Trash,
   Upload,
-  AlertCircle,
   Clock,
   Shield,
+  XCircle,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +50,7 @@ export default function DoctorRegisterPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [otpVerifying, setOtpVerifying] = useState(false);
+  const [phoneVerified, setPhoneVerified] = useState(false);
   const [loadingProfile, setLoadingProfile] = useState(true);
 
   // Mock Upload state
@@ -69,7 +67,16 @@ export default function DoctorRegisterPage() {
           return;
         }
         const meData = await meRes.json();
-        setSessionUser(meData.data.user);
+        const user = meData.data.user;
+        setSessionUser(user);
+
+        if (user.phone) {
+          setPhoneVerified(true);
+          fStep1.setValue("phone", user.phone);
+        }
+        if (user.name) {
+          fStep1.setValue("name", user.name);
+        }
 
         // Fetch specialities
         const specRes = await fetch("/api/public/specialities");
@@ -84,10 +91,31 @@ export default function DoctorRegisterPage() {
           const docData = await docRes.json();
           const doc = docData.data.doctor;
           setDoctorProfile(doc);
-          if (doc.registrationComplete) {
+          if (doc.registrationComplete && doc.verificationStatus === "VERIFIED") {
             router.push("/doctor/dashboard");
           } else {
             setStep(doc.registrationStep || 1);
+          }
+        } else if (docRes.status === 404 && user.googleId && user.phone) {
+          // Doctor profile doesn't exist, but user is logged in with both phone and Google.
+          // Let's check if we have saved step 1 data in localStorage
+          const savedStep1 = localStorage.getItem("jvc_doc_reg_step1");
+          if (savedStep1) {
+            const parsed = JSON.parse(savedStep1);
+            // Submit Step 1 details automatically
+            const regRes = await fetch("/api/doctor/register", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ step: 1, ...parsed }),
+            });
+            if (regRes.ok) {
+              const regData = await regRes.json();
+              setDoctorProfile(regData.data.doctor);
+              setStep(2);
+              localStorage.removeItem("jvc_doc_reg_step1");
+              toast.success("Identity verified and Google account linked!");
+              return;
+            }
           }
         }
       } catch (err) {
@@ -97,6 +125,15 @@ export default function DoctorRegisterPage() {
       }
     }
     init();
+
+    // Check url search params for errors
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const err = params.get("error");
+      if (err) {
+        toast.error(`Linking failed: ${err.replace(/_/g, " ")}`);
+      }
+    }
   }, [router]);
 
   // Form setups for each step
@@ -232,14 +269,45 @@ export default function DoctorRegisterPage() {
       const res = await fetch("/api/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: fStep1.getValues("phone"), otp: otpCode }),
+        body: JSON.stringify({
+          phone: fStep1.getValues("phone"),
+          otp: otpCode,
+          isDoctor: true,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Invalid OTP code");
 
       toast.success("Mobile number verified successfully!");
-      
-      // Auto-submit Step 1 details
+      setPhoneVerified(true);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setOtpVerifying(false);
+    }
+  };
+
+  const handleLinkGoogle = () => {
+    const name = fStep1.getValues("name");
+    const speciality = fStep1.getValues("speciality");
+    const phone = fStep1.getValues("phone");
+
+    if (!name || name.trim() === "") {
+      fStep1.setError("name", { message: "Name is required" });
+      return;
+    }
+    if (!speciality || speciality.trim() === "") {
+      fStep1.setError("speciality", { message: "Speciality is required" });
+      return;
+    }
+
+    localStorage.setItem("jvc_doc_reg_step1", JSON.stringify({ name, phone, speciality }));
+    window.location.href = `/api/auth/google/signin?mockRole=doctor`;
+  };
+
+  const handleSaveStep1 = async () => {
+    setSubmitting(true);
+    try {
       const step1Values = fStep1.getValues();
       const regRes = await fetch("/api/doctor/register", {
         method: "POST",
@@ -254,7 +322,7 @@ export default function DoctorRegisterPage() {
     } catch (err: any) {
       toast.error(err.message);
     } finally {
-      setOtpVerifying(false);
+      setSubmitting(false);
     }
   };
 
@@ -326,25 +394,42 @@ export default function DoctorRegisterPage() {
 
   // Render "Under Review" state if registration is complete but status is PENDING/REJECTED
   if (doctorProfile && doctorProfile.registrationComplete) {
-    const isPending = doctorProfile.verificationStatus === "PENDING";
-    const isRejected = doctorProfile.verificationStatus === "REJECTED";
+    const isPending = doctorProfile.verificationStatus === "PENDING_REVIEW" || doctorProfile.verificationStatus === "PENDING_ACTIVATION";
+    const isSuspended = doctorProfile.verificationStatus === "SUSPENDED" || doctorProfile.user?.isBanned;
 
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
         <Card className="max-w-md w-full shadow-lg rounded-2xl border-none">
           <CardHeader className="text-center pb-2">
             <div className="mx-auto h-16 w-16 bg-[#1B3F6B]/10 rounded-full flex items-center justify-center text-[#1B3F6B] mb-4">
-              {isPending ? <Clock className="h-8 w-8" /> : <Shield className="h-8 w-8 text-red-500" />}
+              {isSuspended ? (
+                <XCircle className="h-8 w-8 text-red-500 animate-pulse" />
+              ) : isPending ? (
+                <Clock className="h-8 w-8 text-amber-500 animate-pulse" />
+              ) : (
+                <Shield className="h-8 w-8 text-red-500" />
+              )}
             </div>
             <CardTitle className="text-2xl font-bold text-[#1B3F6B]">
-              {isPending ? "Verification Under Review" : "Registration Rejected"}
+              {isSuspended
+                ? "Account Suspended"
+                : isPending
+                ? "Verification Under Review"
+                : "Registration Rejected"}
             </CardTitle>
             <CardDescription className="text-sm text-slate-500">
               ID: {doctorProfile.internalDoctorId}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 pt-4 text-center">
-            {isPending ? (
+            {isSuspended ? (
+              <p className="text-slate-600 text-sm leading-relaxed">
+                Your clinic partner account has been suspended. Reason:{" "}
+                <span className="font-semibold text-red-600">
+                  {doctorProfile.user?.bannedReason || "Contact support."}
+                </span>
+              </p>
+            ) : isPending ? (
               <p className="text-slate-600 text-sm leading-relaxed">
                 Thank you, Dr. <span className="font-semibold text-slate-800">{doctorProfile.name}</span>. Your details have been submitted to the JivniCare Command Center. Verification takes up to 24 hours. You will receive an email notification once active.
               </p>
@@ -452,22 +537,29 @@ export default function DoctorRegisterPage() {
                         placeholder="e.g. +919876543210"
                         className="rounded-xl border-slate-200 flex-1"
                         {...fStep1.register("phone")}
-                        disabled={otpSent}
+                        disabled={otpSent || phoneVerified}
                       />
-                      <Button
-                        type="button"
-                        onClick={handleSendOtp}
-                        className="bg-[#1B3F6B] hover:bg-[#1B3F6B]/90 text-white rounded-xl"
-                      >
-                        {otpSent ? "Resend OTP" : "Get OTP"}
-                      </Button>
+                      {!phoneVerified && (
+                        <Button
+                          type="button"
+                          onClick={handleSendOtp}
+                          className="bg-[#1B3F6B] hover:bg-[#1B3F6B]/90 text-white rounded-xl"
+                        >
+                          {otpSent ? "Resend OTP" : "Get OTP"}
+                        </Button>
+                      )}
+                      {phoneVerified && (
+                        <Badge className="bg-emerald-500 text-white rounded-xl flex items-center gap-1 shrink-0 px-3">
+                          <Check className="h-3.5 w-3.5" /> Verified
+                        </Badge>
+                      )}
                     </div>
                     {fStep1.formState.errors.phone && (
                       <p className="text-red-500 text-xs mt-1">{fStep1.formState.errors.phone.message}</p>
                     )}
                   </div>
 
-                  {otpSent && (
+                  {otpSent && !phoneVerified && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
@@ -493,6 +585,41 @@ export default function DoctorRegisterPage() {
                         </Button>
                       </div>
                     </motion.div>
+                  )}
+
+                  {phoneVerified && (
+                    <div className="pt-4 border-t border-slate-100 space-y-4">
+                      {sessionUser?.googleId ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 p-3 bg-emerald-50 text-emerald-800 rounded-xl border border-emerald-100 text-sm font-semibold justify-center">
+                            <Globe className="h-5 w-5 text-emerald-500" />
+                            <span>Google Linked ({sessionUser.email})</span>
+                          </div>
+                          <Button
+                            type="button"
+                            onClick={handleSaveStep1}
+                            disabled={submitting}
+                            className="w-full bg-[#1B3F6B] hover:bg-[#1B3F6B]/90 text-white rounded-xl py-6 font-semibold"
+                          >
+                            {submitting ? <Loader2 className="h-5 w-5 animate-spin mx-auto" /> : "Save & Continue"}
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <p className="text-xs text-slate-500 leading-relaxed text-center">
+                            Google account linking is mandatory for doctors to log in subsequently. Please link your Google profile.
+                          </p>
+                          <Button
+                            type="button"
+                            onClick={handleLinkGoogle}
+                            className="w-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl py-6 font-semibold flex items-center justify-center gap-2 shadow-sm"
+                          >
+                            <Globe className="h-5 w-5 text-red-500" />
+                            Link Google Account
+                          </Button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </CardContent>
               </Card>

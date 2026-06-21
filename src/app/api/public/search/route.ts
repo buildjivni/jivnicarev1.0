@@ -2,7 +2,10 @@ import { NextRequest } from "next/server";
 import { searchService } from "@/lib/services/search.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { rateLimits, applyRateLimit } from "@/lib/utils/rate-limit";
+import { publicSearchSchema } from "@/lib/schemas/booking.schema";
 import * as Sentry from "@sentry/nextjs";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,27 +14,38 @@ export async function GET(request: NextRequest) {
     if (limitResponse) return limitResponse;
 
     const { searchParams } = new URL(request.url);
-    const q = searchParams.get("q") || "";
-    const district = searchParams.get("district");
-    const speciality = searchParams.get("speciality") || undefined;
-    const feeRange = searchParams.get("feeRange") || undefined;
-    const gender = searchParams.get("gender") || undefined;
-    const language = searchParams.get("language") || undefined;
-    const availableToday = searchParams.get("availableToday") === "true";
-    const emergencyOnly = searchParams.get("emergencyOnly") === "true";
-    
-    const latStr = searchParams.get("lat");
-    const lngStr = searchParams.get("lng");
-    const lat = latStr ? parseFloat(latStr) : undefined;
-    const lng = lngStr ? parseFloat(lngStr) : undefined;
-    
-    const pageStr = searchParams.get("page");
-    const page = pageStr ? parseInt(pageStr, 10) : 1;
+    const paramsObj = {
+      q: searchParams.get("q") || undefined,
+      district: searchParams.get("district") || undefined,
+      speciality: searchParams.get("speciality") || undefined,
+      feeRange: searchParams.get("feeRange") || undefined,
+      gender: searchParams.get("gender") || undefined,
+      language: searchParams.get("language") || undefined,
+      availableToday: searchParams.get("availableToday") || undefined,
+      emergencyOnly: searchParams.get("emergencyOnly") || undefined,
+      lat: searchParams.get("lat") || undefined,
+      lng: searchParams.get("lng") || undefined,
+      page: searchParams.get("page") || undefined,
+    };
 
-    // 2. Validate district is provided
-    if (!district) {
-      return apiError("District is required.", 400);
+    const parsedResult = publicSearchSchema.safeParse(paramsObj);
+    if (!parsedResult.success) {
+      return apiError(parsedResult.error.errors[0].message, 400);
     }
+
+    const {
+      q,
+      district,
+      speciality,
+      feeRange,
+      gender,
+      language,
+      availableToday,
+      emergencyOnly,
+      lat,
+      lng,
+      page,
+    } = parsedResult.data;
 
     // 3. Minimum query length check
     if (q.trim().length === 1) {
@@ -40,11 +54,6 @@ export async function GET(request: NextRequest) {
         totalCount: 0,
         message: "Type at least 2 characters",
       });
-    }
-
-    // 4. Maximum query length check
-    if (q.length > 100) {
-      return apiError("Search query must not exceed 100 characters.", 400);
     }
 
     // 5. Execute search

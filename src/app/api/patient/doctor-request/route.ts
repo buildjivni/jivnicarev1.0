@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { doctorService } from "@/lib/services/doctor.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { z } from "zod";
 import * as Sentry from "@sentry/nextjs";
@@ -22,33 +22,22 @@ export async function POST(request: NextRequest) {
     }
     const { name, phone, district, speciality } = result.data;
 
-    // 2. Validate district is active (Jamui or Deoghar only in V1)
-    const districtRecord = await prisma.district.findFirst({
-      where: {
-        name: { equals: district, mode: "insensitive" },
-        isActive: true,
-      },
-    });
-
-    if (!districtRecord) {
-      return apiError(ERRORS.INVALID_DISTRICT, 400);
-    }
-
-    // 3. Create DoctorRequest record
-    const docRequest = await prisma.doctorRequest.create({
-      data: {
-        name,
-        phone,
-        district,
-        speciality,
-      },
+    // 2. Call Service Layer
+    const docRequest = await doctorService.createDoctorRequest({
+      name,
+      phone,
+      district,
+      speciality,
     });
 
     return apiSuccess({
       message: "Request submitted successfully",
       id: docRequest.id,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof Error && error.message === "INVALID_DISTRICT") {
+      return apiError(ERRORS.INVALID_DISTRICT, 400);
+    }
     console.error("doctor request error:", error);
     Sentry.captureException(error);
     return apiError(ERRORS.SERVER_ERROR, 500);

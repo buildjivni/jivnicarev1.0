@@ -1,28 +1,29 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { adminService } from "@/lib/services/admin.service";
+import { getSession } from "@/lib/utils/auth";
+import { adminBanDoctorSchema } from "@/lib/schemas/admin.schema";
 
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const adminId = request.headers.get("x-user-id");
-    const userRole = request.headers.get("x-user-role");
-
-    if (!adminId || userRole !== "ADMIN") {
+    const session = await getSession();
+    if (!session || session.role !== "ADMIN") {
       return apiError(ERRORS.FORBIDDEN, 403);
     }
+    const adminId = session.userId;
 
     const doctorId = params.id;
-    const body = await request.json();
-    const { reason } = body;
+    const body = await _request.json();
 
-    if (!reason || reason.trim() === "") {
-      return apiError("Ban reason is required.", 400);
+    const parsed = adminBanDoctorSchema.safeParse(body);
+    if (!parsed.success) {
+      return apiError(parsed.error.errors[0].message, 400);
     }
 
-    const doctor = await adminService.banDoctor(doctorId, adminId, reason);
+    const doctor = await adminService.banDoctor(doctorId, adminId, parsed.data.reason);
     return apiSuccess({ doctor });
   } catch (error: any) {
     console.error("Doctor ban error:", error);

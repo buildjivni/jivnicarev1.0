@@ -1,8 +1,7 @@
 import { NextRequest } from "next/server";
-import { getSession, createJWT, setSessionCookie } from "@/lib/utils/auth";
-import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/utils/auth";
+import { adminService } from "@/lib/services/admin.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
-import crypto from "crypto";
 import * as Sentry from "@sentry/nextjs";
 
 export async function POST(request: NextRequest) {
@@ -18,79 +17,27 @@ export async function POST(request: NextRequest) {
       return apiError("Backup code must be exactly 8 characters.", 400);
     }
 
-    // 2. Fetch User and Admin records
-    const user = await prisma.user.findUnique({ where: { id: session.userId } });
-    if (!user || user.role !== "ADMIN" || !user.email) {
-      return apiError(ERRORS.FORBIDDEN, 403);
-    }
-
-    if (user.isBanned) {
-      return apiError("Account suspended.", 403);
-    }
-
-    const admin = await prisma.admin.findUnique({ where: { email: user.email } });
-    if (!admin) {
-      return apiError(ERRORS.NOT_FOUND, 404);
-    }
-
-    // 3. Hash the submitted backup code
-    const codeHash = crypto.createHash("sha256").update(code).digest("hex");
-
-    // 4. Find matching unused backup code
-    const backupCodeRecord = await prisma.backupCode.findFirst({
-      where: {
-        adminId: admin.id,
-        codeHash,
-        used: false,
-      },
-    });
-
-    if (!backupCodeRecord) {
-      return apiError("Invalid or already used backup code.", 400);
-    }
-
-    // 5. Mark backup code as used and upgrade session in a transaction
-    await prisma.$transaction(async (tx) => {
-      await tx.backupCode.update({
-        where: { id: backupCodeRecord.id },
-        data: {
-          used: true,
-          usedAt: new Date(),
-        },
-      });
-
-      await tx.admin.update({
-        where: { id: admin.id },
-        data: {
-          lastLoginAt: new Date(),
-        },
-      });
-    });
-
-    // 6. Delete temporary session and upgrade to full ADMIN session
-    await prisma.authSession.deleteMany({ where: { id: session.sessionId } });
-
-    const newSession = await prisma.authSession.create({
-      data: {
-        userId: user.id,
-        token: crypto.randomUUID(),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
-      },
-    });
-
-    const upgradedJwt = await createJWT({
-      userId: user.id,
-      role: "ADMIN",
-      sessionId: newSession.id,
-    });
-    setSessionCookie(upgradedJwt);
+    // 2. Call Service Layer
+    await adminService.verifyBackupCode(session.userId, session.sessionId, code);
 
     return apiSuccess({
       message: "Backup code verification successful",
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("verify-backup error:", error);
     Sentry.captureException(error);
+    if (error.message === "FORBIDDEN") {
+      return apiError(ERRORS.FORBIDDEN, 403);
+    }
+    if (error.message === "SUSPENDED") {
+      return apiError("Account suspended.", 403);
+    }
+    if (error.message === "NOT_FOUND") {
+      return apiError(ERRORS.NOT_FOUND, 404);
+    }
+    if (error.message === "INVALID_BACKUP_CODE") {
+      return apiError("Invalid or already used backup code.", 400);
+    }
     return apiError(ERRORS.SERVER_ERROR, 500);
   }
 }

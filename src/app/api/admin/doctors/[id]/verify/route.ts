@@ -1,32 +1,35 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { adminService } from "@/lib/services/admin.service";
+import { getSession } from "@/lib/utils/auth";
+import { adminVerifyDoctorSchema, adminRejectDoctorSchema } from "@/lib/schemas/admin.schema";
 
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const adminId = request.headers.get("x-user-id");
-    const userRole = request.headers.get("x-user-role");
-
-    if (!adminId || userRole !== "ADMIN") {
+    const session = await getSession();
+    if (!session || session.role !== "ADMIN") {
       return apiError(ERRORS.FORBIDDEN, 403);
     }
+    const adminId = session.userId;
 
     const doctorId = params.id;
-    const body = await request.json();
+    const body = await _request.json();
     const { action, note, reason } = body;
 
     if (action === "APPROVE") {
-      if (!note || note.trim() === "") {
-        return apiError("Verification note is required.", 400);
+      const parsed = adminVerifyDoctorSchema.safeParse({ verificationNote: note });
+      if (!parsed.success) {
+        return apiError(parsed.error.errors[0].message, 400);
       }
       const doctor = await adminService.verifyDoctor(doctorId, adminId, note);
       return apiSuccess({ doctor });
     } else if (action === "REJECT") {
-      if (!reason || reason.trim() === "") {
-        return apiError("Rejection reason is required.", 400);
+      const parsed = adminRejectDoctorSchema.safeParse({ rejectionReason: reason });
+      if (!parsed.success) {
+        return apiError(parsed.error.errors[0].message, 400);
       }
       const doctor = await adminService.rejectDoctor(doctorId, adminId, reason);
       return apiSuccess({ doctor });

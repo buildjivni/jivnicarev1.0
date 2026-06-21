@@ -1,21 +1,20 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { doctorService } from "@/lib/services/doctor.service";
-import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/utils/auth";
+import { doctorProfileUpdateSchema } from "@/lib/schemas/doctor.schema";
 
-export async function GET(request: NextRequest) {
+export const dynamic = "force-dynamic";
+
+export async function GET(_request: NextRequest) {
   try {
-    const userId = request.headers.get("x-user-id");
-    if (!userId) {
+    const session = await getSession();
+    if (!session || (session.role !== "DOCTOR" && session.role !== "ADMIN")) {
       return apiError(ERRORS.UNAUTHORIZED, 401);
     }
+    const userId = session.userId;
 
-    const doctor = await prisma.doctor.findUnique({
-      where: { userId },
-      include: {
-        user: true,
-      },
-    });
+    const doctor = await doctorService.getProfileByUserId(userId);
 
     if (!doctor) {
       return apiError("Doctor profile not found.", 404);
@@ -30,23 +29,27 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const userId = request.headers.get("x-user-id");
-    if (!userId) {
+    const session = await getSession();
+    if (!session || (session.role !== "DOCTOR" && session.role !== "ADMIN")) {
       return apiError(ERRORS.UNAUTHORIZED, 401);
     }
+    const userId = session.userId;
 
-    const doctor = await prisma.doctor.findUnique({
-      where: { userId },
-    });
+    const doctor = await doctorService.getProfileByUserId(userId);
 
     if (!doctor) {
       return apiError("Doctor profile not found.", 404);
     }
 
     const body = await request.json();
+    const result = doctorProfileUpdateSchema.safeParse(body);
+    if (!result.success) {
+      return apiError(result.error.errors[0]?.message || "Invalid input provided.", 400);
+    }
+    const validatedData = result.data;
 
-    if (body.weeklySchedule !== undefined) {
-      const updatedDoctor = await doctorService.updateSchedule(doctor.id, body.weeklySchedule);
+    if (validatedData.weeklySchedule !== undefined) {
+      const updatedDoctor = await doctorService.updateSchedule(doctor.id, validatedData.weeklySchedule);
       return apiSuccess({ doctor: updatedDoctor });
     }
 
@@ -76,22 +79,23 @@ export async function PUT(request: NextRequest) {
     ];
 
     for (const key of updatableKeys) {
-      if (body[key] !== undefined) {
-        allowedUpdates[key] = body[key];
+      const val = validatedData[key as keyof typeof validatedData];
+      if (val !== undefined) {
+        allowedUpdates[key] = val;
       }
     }
 
     if (Object.keys(allowedUpdates).length > 0) {
-      const updatedDoctor = await prisma.doctor.update({
-        where: { id: doctor.id },
-        data: allowedUpdates,
-      });
+      const updatedDoctor = await doctorService.updateProfileByUserId(userId, allowedUpdates);
       return apiSuccess({ doctor: updatedDoctor });
     }
 
     return apiError("No valid fields to update.", 400);
   } catch (error: any) {
     console.error("Update doctor profile error:", error);
+    if (error.message === "DOCTOR_SUSPENDED") {
+      return apiError("Account suspended.", 403);
+    }
     return apiError(error.message || ERRORS.SERVER_ERROR, 500);
   }
 }

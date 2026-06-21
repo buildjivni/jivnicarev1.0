@@ -1,47 +1,20 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { bookingService } from "@/lib/services/booking.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import * as Sentry from "@sentry/nextjs";
+import { getSession } from "@/lib/utils/auth";
 
-export async function GET(request: NextRequest) {
+export const dynamic = "force-dynamic";
+
+export async function GET(_request: NextRequest) {
   try {
-    const userId = request.headers.get("x-user-id");
-    if (!userId) {
+    const session = await getSession();
+    if (!session || session.role !== "PATIENT") {
       return apiError(ERRORS.UNAUTHORIZED, 401);
     }
+    const userId = session.userId;
 
-    const bookings = await prisma.queueToken.findMany({
-      where: {
-        patientId: userId,
-      },
-      include: {
-        queue: {
-          select: {
-            id: true,
-            date: true,
-            status: true,
-            type: true,
-            doctor: {
-              select: {
-                id: true,
-                name: true,
-                slug: true,
-                speciality: true,
-                clinicName: true,
-                clinicAddress: true,
-                clinicCity: true,
-                clinicDistrict: true,
-                profilePhoto: true,
-                partnerTier: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    const bookings = await bookingService.getBookings(userId);
 
     return apiSuccess({ bookings });
   } catch (error) {

@@ -3,12 +3,12 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
-import { Clock, MapPin, Star, UserCheck, ShieldAlert, Calendar, CheckCircle, ArrowRight, User } from "lucide-react";
+import { Clock, MapPin, Star, UserCheck, ShieldAlert, CheckCircle, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Header from "@/components/shared/Header";
 import Footer from "@/components/shared/Footer";
-import { AvailabilityStatus, PartnerTier, TokenStatus } from "@prisma/client";
+import { getETARangeString } from "@/lib/utils/eta";
 
 export default function DoctorProfilePage() {
   const params = useParams();
@@ -154,6 +154,8 @@ export default function DoctorProfilePage() {
                 src={doctor.profilePhoto}
                 alt={doctor.name}
                 fill
+                placeholder="blur"
+                blurDataURL="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMjgiIGhlaWdodD0iMTI4IiB2aWV3Qm94PSIwIDAgMTI4IDEyOCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjZWZmNmZmIiAvPjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iI2RiZWFmZSIgLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgZmlsbD0idXJsKCNnKSIvPjwvc3ZnPg=="
                 className={`object-cover ${isOnBreak || isOffline ? "saturate-[0.6] brightness-[0.95]" : ""}`}
               />
             ) : (
@@ -329,6 +331,12 @@ export default function DoctorProfilePage() {
                   <span className="text-xs text-content-muted mt-2">
                     {bookingResult.patientsAhead} patients ahead of you
                   </span>
+                  <div className="w-full border-t border-border mt-3 pt-3 flex flex-col items-center">
+                    <span className="text-[10px] font-semibold text-content-secondary uppercase tracking-wider">Estimated Arrival Window</span>
+                    <span className="text-sm font-bold text-brand-blue mt-0.5">
+                      {getETARangeString(bookingResult.patientsAhead)}
+                    </span>
+                  </div>
                 </div>
 
                 <p className="text-sm text-content-secondary leading-relaxed">

@@ -1,54 +1,18 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
-import { prisma } from "@/lib/prisma";
+import { adminService } from "@/lib/services/admin.service";
+import { getSession } from "@/lib/utils/auth";
 
-export async function GET(request: NextRequest) {
+export const dynamic = "force-dynamic";
+
+export async function GET(_request: NextRequest) {
   try {
-    const userRole = request.headers.get("x-user-role");
-    if (userRole !== "ADMIN") {
+    const session = await getSession();
+    if (!session || session.role !== "ADMIN") {
       return apiError(ERRORS.FORBIDDEN, 403);
     }
 
-    // Top 10 queries overall
-    const topQueriesRaw = await prisma.searchLog.groupBy({
-      by: ["query"],
-      _count: {
-        id: true,
-      },
-      orderBy: {
-        _count: {
-          id: "desc",
-        },
-      },
-      take: 10,
-    });
-
-    const topQueries = topQueriesRaw.map((q) => ({
-      query: q.query,
-      count: q._count.id,
-    }));
-
-    // Top 10 zero-result queries
-    const zeroResultQueriesRaw = await prisma.searchLog.groupBy({
-      by: ["query"],
-      where: {
-        resultCount: 0,
-      },
-      _count: {
-        id: true,
-      },
-      orderBy: {
-        _count: {
-          id: "desc",
-        },
-      },
-      take: 10,
-    });
-
-    const zeroResultQueries = zeroResultQueriesRaw.map((q) => ({
-      query: q.query,
-      count: q._count.id,
-    }));
+    const { topQueries, zeroResultQueries } = await adminService.getSearchInsights();
 
     return apiSuccess({
       topQueries,

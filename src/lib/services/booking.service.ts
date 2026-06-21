@@ -4,8 +4,42 @@ import { getLogicalDate } from "@/lib/utils/logical-date";
 import { generatePhoneHash, encrypt } from "@/lib/services/crypto.service";
 import { createAuditLog } from "@/lib/services/audit.service";
 import { sendNotification } from "@/lib/services/notification.service";
-import { TokenType, TokenStatus, QueueType, QueueStatus, AuditAction, Role } from "@prisma/client";
+import { TokenType, TokenStatus, QueueType, QueueStatus, AuditAction, Role, AvailabilityStatus } from "@prisma/client";
 import crypto from "crypto";
+
+async function checkAndAutoTriggerAvailability(doctor: any, tx: any) {
+  if (!doctor.clinicStartTime || !doctor.clinicEndTime) return doctor;
+
+  const now = new Date();
+  const options = { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false } as const;
+  const istTimeStr = now.toLocaleTimeString("en-US", options); // "09:30"
+  
+  const kolkataDateStr = now.toLocaleDateString("en-US", { timeZone: "Asia/Kolkata" });
+  const kolkata4Am = new Date(`${kolkataDateStr} 04:00:00 GMT+0530`);
+  
+  if (
+    doctor.availabilityStatus === "OFFLINE" &&
+    doctor.updatedAt < kolkata4Am &&
+    istTimeStr >= doctor.clinicStartTime &&
+    istTimeStr < doctor.clinicEndTime
+  ) {
+    const updated = await tx.doctor.update({
+      where: { id: doctor.id },
+      data: {
+        availabilityStatus: "AVAILABLE",
+        isAcceptingBookings: true,
+      },
+    });
+    const todayQueue = await tx.dailyQueue.findFirst({
+      where: { doctorId: doctor.id, date: getLogicalDate() },
+    });
+    if (todayQueue) {
+      await redis.del(`queue:${todayQueue.id}`).catch(() => {});
+    }
+    return { ...doctor, ...updated };
+  }
+  return doctor;
+}
 
 export class BookingService {
   /**
@@ -18,89 +52,98 @@ export class BookingService {
     idempotencyKey: string,
     patientId: string // The logged-in patient's User ID
   ) {
-    // Check if patient is banned or inactive
-    const user = await prisma.user.findUnique({ where: { id: patientId } });
-    if (!user) {
-      throw new Error("User not found.");
-    }
-    if (user.isBanned || !user.isActive) {
-      throw new Error("PATIENT_SUSPENDED");
-    }
-
     // 1. Resolve logical date
     const logicalDate = getLogicalDate(date);
 
-    // 2. Validate Doctor exists, is verified & active
-    const doctor = await prisma.doctor.findFirst({
-      where: {
-        id: doctorId,
-        verificationStatus: "VERIFIED",
-        deletedAt: null,
-      },
-    });
+    // 2. Perform everything in a single database transaction with a 20-second timeout
+    const result = await prisma.$transaction(async (tx) => {
+      // 2a. Acquire exclusive row lock on User to prevent concurrent booking limit bypasses
+      await tx.$queryRaw`SELECT id FROM "users" WHERE id = ${patientId} FOR UPDATE`;
 
-    if (!doctor) {
-      throw new Error("Doctor not found or not active.");
-    }
+      const user = await tx.user.findUnique({ where: { id: patientId } });
+      if (!user) {
+        throw new Error("User not found.");
+      }
+      if (user.isBanned || !user.isActive) {
+        throw new Error("PATIENT_SUSPENDED");
+      }
 
-    // 3. Idempotency Check (Duplicate prevention)
-    const existingToken = await prisma.queueToken.findUnique({
-      where: { idempotencyKey },
-      include: {
-        queue: {
-          include: {
-            doctor: true,
-          },
-        },
-      },
-    });
-
-    if (existingToken) {
-      // Calculate patients ahead
-      const patientsAhead = await prisma.queueToken.count({
+      // 2b. Validate Doctor exists, is verified & active, and handle auto-trigger of availability
+      const doc = await tx.doctor.findFirst({
         where: {
-          queueId: existingToken.queueId,
-          tokenNumber: { lt: existingToken.tokenNumber },
-          status: { in: [TokenStatus.BOOKED, TokenStatus.AWAITING_ARRIVAL, TokenStatus.PAYMENT_PENDING, TokenStatus.READY] },
+          id: doctorId,
+          verificationStatus: "VERIFIED",
+          deletedAt: null,
+        },
+      });
+      if (!doc) {
+        throw new Error("Doctor not found or not active.");
+      }
+      const doctor = await checkAndAutoTriggerAvailability(doc, tx);
+
+      // Enforce doctor availability: bookings only allowed if AVAILABLE
+      if (doctor.availabilityStatus !== AvailabilityStatus.AVAILABLE || !doctor.isAcceptingBookings) {
+        throw new Error("DOCTOR_UNAVAILABLE");
+      }
+
+      // 2c. Idempotency Check (Duplicate prevention)
+      const existingToken = await tx.queueToken.findUnique({
+        where: { idempotencyKey },
+        include: {
+          queue: {
+            include: {
+              doctor: true,
+            },
+          },
         },
       });
 
-      return {
-        tokenId: existingToken.id,
-        tokenNumber: existingToken.tokenNumber,
-        status: existingToken.status,
-        patientsAhead,
-        isDuplicate: true,
-      };
-    }
+      if (existingToken) {
+        // Calculate patients ahead
+        const patientsAhead = await tx.queueToken.count({
+          where: {
+            queueId: existingToken.queueId,
+            tokenNumber: { lt: existingToken.tokenNumber },
+            status: { in: [TokenStatus.BOOKED, TokenStatus.AWAITING_ARRIVAL, TokenStatus.PAYMENT_PENDING, TokenStatus.READY] },
+          },
+        });
 
-    // 4. Enforce Booking Limit: Max 3 active bookings per patient per day
-    const activeBookingCount = await prisma.queueToken.count({
-      where: {
-        patientId,
-        status: {
-          in: [
-            TokenStatus.BOOKED,
-            TokenStatus.AWAITING_ARRIVAL,
-            TokenStatus.PAYMENT_PENDING,
-            TokenStatus.READY,
-            TokenStatus.CALLED,
-            TokenStatus.IN_CONSULTATION,
-          ],
+        return {
+          tokenId: existingToken.id,
+          tokenNumber: existingToken.tokenNumber,
+          status: existingToken.status,
+          patientsAhead,
+          isDuplicate: true,
+          queueId: existingToken.queueId,
+          doctorName: doctor.name,
+        };
+      }
+
+      // 2d. Enforce Booking Limit: Max 3 active bookings per patient per day
+      const activeBookingCount = await tx.queueToken.count({
+        where: {
+          patientId,
+          status: {
+            in: [
+              TokenStatus.BOOKED,
+              TokenStatus.AWAITING_ARRIVAL,
+              TokenStatus.PAYMENT_PENDING,
+              TokenStatus.READY,
+              TokenStatus.CALLED,
+              TokenStatus.IN_CONSULTATION,
+            ],
+          },
+          queue: {
+            date: logicalDate,
+          },
         },
-        queue: {
-          date: logicalDate,
-        },
-      },
-    });
+      });
 
-    if (activeBookingCount >= 3) {
-      throw new Error("BOOKING_LIMIT_EXCEEDED");
-    }
+      if (activeBookingCount >= 3) {
+        throw new Error("BOOKING_LIMIT_EXCEEDED");
+      }
 
-    // 5. Execute Atomic Transaction with Row Locking
-    const result = await prisma.$transaction(async (tx) => {
-      // 5a. Find or create the DailyQueue for the doctor on this logical date
+      // 2e. Find or create the DailyQueue for the doctor on this logical date
       let dailyQueue = await tx.dailyQueue.findUnique({
         where: {
           doctorId_date_type: {
@@ -123,12 +166,12 @@ export class BookingService {
         });
       }
 
-      // 5b. Exclusively Lock the DailyQueue row
+      // 2f. Exclusively Lock the DailyQueue row
       await tx.$queryRaw`
         SELECT id FROM "daily_queues" WHERE id = ${dailyQueue.id} FOR UPDATE
       `;
 
-      // 5c. Fetch fresh DailyQueue state
+      // 2g. Fetch fresh DailyQueue state
       const lockedQueue = await tx.dailyQueue.findUnique({
         where: { id: dailyQueue.id },
       });
@@ -141,28 +184,12 @@ export class BookingService {
         throw new Error("QUEUE_CLOSED");
       }
 
-      // 5d. Check Capacity Limit (by counting active bookings)
-      const activeTokensCount = await tx.queueToken.count({
-        where: {
-          queueId: lockedQueue.id,
-          status: {
-            in: [
-              TokenStatus.BOOKED,
-              TokenStatus.AWAITING_ARRIVAL,
-              TokenStatus.PAYMENT_PENDING,
-              TokenStatus.READY,
-              TokenStatus.CALLED,
-              TokenStatus.IN_CONSULTATION,
-            ],
-          },
-        },
-      });
-
-      if (activeTokensCount >= lockedQueue.dailyLimit) {
+      // 2h. Check Capacity Limit (blocks when totalTokens >= dailyTokenLimit)
+      if (lockedQueue.totalTokens >= lockedQueue.dailyLimit) {
         throw new Error("QUEUE_FULL");
       }
 
-      // 5e. Increment token count
+      // 2i. Increment token count
       const newTokenNumber = lockedQueue.totalTokens + 1;
       await tx.dailyQueue.update({
         where: { id: lockedQueue.id },
@@ -171,7 +198,7 @@ export class BookingService {
         },
       });
 
-      // 5f. Create the QueueToken
+      // 2j. Create the QueueToken
       const token = await tx.queueToken.create({
         data: {
           queueId: lockedQueue.id,
@@ -183,19 +210,30 @@ export class BookingService {
         },
       });
 
-      // 5g. Invalidate Redis Queue Cache immediately
-      const cacheKey = `queue:${lockedQueue.id}`;
-      await redis.del(cacheKey).catch(() => {});
-
       return {
         tokenId: token.id,
         tokenNumber: token.tokenNumber,
         status: token.status,
         queueId: lockedQueue.id,
+        isDuplicate: false,
+        doctorName: doctor.name,
       };
-    });
+    }, { timeout: 20000 });
 
-    // 6. Side effects outside transaction: Audit log & Notification
+    // 3. Side effects outside transaction: Invalidate cache, Audit log, Notification
+    const cacheKey = `queue:${result.queueId}`;
+    await redis.del(cacheKey).catch(() => {});
+
+    if (result.isDuplicate) {
+      return {
+        tokenId: result.tokenId,
+        tokenNumber: result.tokenNumber,
+        status: result.status,
+        patientsAhead: result.patientsAhead,
+        isDuplicate: true,
+      };
+    }
+
     createAuditLog({
       userId: patientId,
       role: Role.PATIENT,
@@ -207,7 +245,7 @@ export class BookingService {
 
     sendNotification(
       patientId,
-      `Your booking with Dr. ${doctor.name} is confirmed. Token Number: #${result.tokenNumber}`,
+      `Your booking with Dr. ${result.doctorName} is confirmed. Token Number: #${result.tokenNumber}`,
       "IN_APP"
     ).catch(() => {});
 
@@ -221,7 +259,9 @@ export class BookingService {
     });
 
     return {
-      ...result,
+      tokenId: result.tokenId,
+      tokenNumber: result.tokenNumber,
+      status: result.status,
       patientsAhead,
       isDuplicate: false,
     };
@@ -310,6 +350,13 @@ export class BookingService {
    * Joins the Doctor's Waitlist
    */
   async joinWaitlist(doctorId: string, phone: string, name?: string, userId?: string) {
+    if (userId) {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (user && (user.isBanned || !user.isActive)) {
+        throw new Error("PATIENT_SUSPENDED");
+      }
+    }
+
     // Check if waitlist record already exists
     const existing = await prisma.waitlist.findFirst({
       where: {
@@ -460,7 +507,7 @@ export class BookingService {
     });
 
     // 7. Auto-book the slot
-    const token = await tx.queueToken.create({
+    await tx.queueToken.create({
       data: {
         queueId: lockedQueue.id,
         patientId: user.id,
@@ -481,6 +528,126 @@ export class BookingService {
       `Good news — your slot with Dr. ${doctor?.name || "Doctor"} is confirmed today, Token #${newTokenNumber}. Cancel from the app if you can't make it.`,
       "IN_APP"
     ).catch(() => {});
+  }
+
+  /**
+   * Fetches active and past bookings for a patient
+   */
+  async getBookings(patientId: string) {
+    return prisma.queueToken.findMany({
+      where: {
+        patientId,
+      },
+      include: {
+        queue: {
+          select: {
+            id: true,
+            date: true,
+            status: true,
+            type: true,
+            doctor: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                speciality: true,
+                clinicName: true,
+                clinicAddress: true,
+                clinicCity: true,
+                clinicDistrict: true,
+                profilePhoto: true,
+                partnerTier: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+  }
+
+  /**
+   * Retrieves token tracking parameters, patients ahead, currently serving, and validates permissions
+   */
+  async getTokenStatus(tokenId: string, userId: string, role: string) {
+    const token = await prisma.queueToken.findUnique({
+      where: { id: tokenId },
+      include: {
+        queue: {
+          include: {
+            doctor: {
+              select: {
+                id: true,
+                name: true,
+                speciality: true,
+                clinicName: true,
+                clinicAddress: true,
+                clinicCity: true,
+                availabilityStatus: true,
+                isAcceptingBookings: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!token) {
+      throw new Error("NOT_FOUND");
+    }
+
+    if (token.patientId !== userId && role !== "ADMIN") {
+      throw new Error("FORBIDDEN");
+    }
+
+    const patientsAhead = await prisma.queueToken.count({
+      where: {
+        queueId: token.queueId,
+        tokenNumber: { lt: token.tokenNumber },
+        status: {
+          in: [
+            TokenStatus.BOOKED,
+            TokenStatus.AWAITING_ARRIVAL,
+            TokenStatus.PAYMENT_PENDING,
+            TokenStatus.READY,
+          ],
+        },
+      },
+    });
+
+    const servingToken = await prisma.queueToken.findFirst({
+      where: {
+        queueId: token.queueId,
+        status: {
+          in: [TokenStatus.IN_CONSULTATION, TokenStatus.CALLED],
+        },
+      },
+      orderBy: {
+        tokenNumber: "asc",
+      },
+    });
+
+    const currentlyServing = servingToken ? servingToken.tokenNumber : 0;
+
+    return {
+      token: {
+        id: token.id,
+        tokenNumber: token.tokenNumber,
+        status: token.status,
+        type: token.type,
+        createdAt: token.createdAt,
+      },
+      doctor: token.queue.doctor,
+      queue: {
+        date: token.queue.date,
+        status: token.queue.status,
+        type: token.queue.type,
+      },
+      patientsAhead,
+      currentlyServing,
+    };
   }
 }
 

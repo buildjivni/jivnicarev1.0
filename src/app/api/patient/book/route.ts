@@ -4,14 +4,15 @@ import { bookingService } from "@/lib/services/booking.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { TokenType } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
+import { getSession } from "@/lib/utils/auth";
 
 export async function POST(request: NextRequest) {
   try {
-    // 1. Get authenticated user ID from headers (injected by middleware)
-    const userId = request.headers.get("x-user-id");
-    if (!userId) {
+    const session = await getSession();
+    if (!session || session.role !== "PATIENT") {
       return apiError(ERRORS.UNAUTHORIZED, 401);
     }
+    const userId = session.userId;
 
     const body = await request.json();
 

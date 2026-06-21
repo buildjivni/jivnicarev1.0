@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Calendar, ArrowRight, ShieldAlert, Clock, MapPin, Search } from "lucide-react";
+import { Calendar, ArrowRight, ShieldAlert, MapPin, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Header from "@/components/shared/Header";
 import Footer from "@/components/shared/Footer";
@@ -120,7 +120,7 @@ export default function BookingsPage() {
             <p className="text-sm text-content-secondary max-w-xs leading-relaxed">
               JivniCare connects you directly with leading clinics. Book a token for same-day priority checkups.
             </p>
-            <Link href="/doctors">
+            <Link href="/search">
               <Button className="bg-brand-blue hover:bg-brand-blue-hover text-white mt-1 gap-1.5">
                 <Search className="w-4 h-4" />
                 Find a Doctor

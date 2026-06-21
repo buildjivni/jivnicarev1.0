@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Search, MapPin, SlidersHorizontal, Check, RefreshCw, X, AlertCircle } from "lucide-react";
+import { Search, MapPin, SlidersHorizontal, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Header from "@/components/shared/Header";
@@ -427,8 +427,9 @@ function SearchPage() {
                   </div>
 
                   {waitlistSubmitted ? (
-                    <div className="bg-brand-green/10 border border-brand-green/20 text-brand-green p-4 rounded-lg text-center text-sm font-semibold">
-                      🎉 You will be notified immediately when JivniCare launches in {district}!
+                    <div className="bg-brand-green/10 border border-brand-green/20 text-brand-green p-4 rounded-lg text-center text-sm font-semibold flex items-center justify-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 shrink-0" />
+                      <span>You will be notified immediately when JivniCare expands to {district}!</span>
                     </div>
                   ) : (
                     <form onSubmit={handleWaitlistSubmit} className="flex flex-col sm:flex-row gap-3 mt-2">

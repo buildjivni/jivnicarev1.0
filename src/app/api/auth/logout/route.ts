@@ -4,7 +4,7 @@ import { logout } from "@/lib/services/auth.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import * as Sentry from "@sentry/nextjs";
 
-export async function POST(request: NextRequest) {
+export async function POST(_request: NextRequest) {
   try {
     const session = await getSession();
     if (session) {

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { doctorService } from "@/lib/services/doctor.service";
+import { getSession } from "@/lib/utils/auth";
 import {
   doctorRegisterStep1Schema,
   doctorRegisterStep2Schema,
@@ -11,10 +12,16 @@ import { z } from "zod";
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = request.headers.get("x-user-id");
-    if (!userId) {
+    const session = await getSession();
+    if (
+      !session ||
+      (session.role !== "DOCTOR_PENDING_GOOGLE_LINK" &&
+        session.role !== "PATIENT" &&
+        session.role !== "ADMIN")
+    ) {
       return apiError(ERRORS.UNAUTHORIZED, 401);
     }
+    const userId = session.userId;
 
     const body = await request.json();
     const step = parseInt(body.step, 10);
@@ -47,6 +54,9 @@ export async function POST(request: NextRequest) {
     return apiSuccess({ doctor });
   } catch (error: any) {
     console.error("Doctor registration error:", error);
+    if (error.message === "DOCTOR_SUSPENDED" || error.message === "USER_SUSPENDED") {
+      return apiError("Account suspended.", 403);
+    }
     return apiError(error.message || ERRORS.SERVER_ERROR, 500);
   }
 }

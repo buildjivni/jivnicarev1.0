@@ -70,7 +70,7 @@ export default function Footer() {
       {/* Bottom Copyright */}
       <div className="container mx-auto px-4 mt-8 pt-6 border-t border-border/80 text-center">
         <p className="text-xs text-content-muted">
-          &copy; {new Date().getFullYear()} JivniCare. All rights reserved. Platform fees are 100% waived for V1 partner clinics.
+          &copy; {new Date().getFullYear()} JivniCare. All rights reserved. Platform convenience fees are entirely waived. Pay your doctor directly at the clinic.
         </p>
       </div>
     </footer>

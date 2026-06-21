@@ -4,6 +4,14 @@ import { createJWT, setSessionCookie, clearSessionCookie } from "@/lib/utils/aut
 import { encrypt, decrypt, generatePhoneHash } from "@/lib/services/crypto.service";
 import { ERRORS } from "@/lib/utils/api-response";
 import crypto from "crypto";
+import { notificationService } from "@/lib/services/notification.service";
+import { createAuditLog } from "@/lib/services/audit.service";
+import { NotificationType, NotificationStatus, AuditAction } from "@prisma/client";
+
+// Fail-fast startup/build check in production if ADMIN_NOTIFICATION_EMAIL is missing
+if (process.env.NODE_ENV === "production" && !process.env.ADMIN_NOTIFICATION_EMAIL) {
+  throw new Error("ADMIN_NOTIFICATION_EMAIL environment variable is missing in production!");
+}
 
 const OTP_KEY = (p: string) => `otp:${p}`;
 const ATTEMPT_KEY = (p: string) => `otp_att:${p}`;
@@ -56,28 +64,46 @@ export async function generateOTP(phone: string) {
     }
   }
 
-  // 1.5. Check resend cooldown (25s)
+  // 1.5. Check and Set resend cooldown (25s) atomically (lock)
   if (redisHealthy) {
-    const hasCooldown = await redis.get<string>(COOLDOWN_KEY(phoneHash));
-    if (hasCooldown) {
+    const setSuccess = await redis.set(COOLDOWN_KEY(phoneHash), "1", { nx: true, ex: 25 });
+    if (!setSuccess) {
       const ttl = await redis.ttl(COOLDOWN_KEY(phoneHash));
       return { success: false, message: "Please wait 25 seconds before requesting another OTP.", retryAfter: ttl > 0 ? ttl : 25 };
     }
   } else {
-    // DB Fallback cooldown check
-    const cooldownLog = await prisma.rateLimitLog.findFirst({
-      where: {
-        identifier: phoneHash,
-        type: "PHONE_OTP_COOLDOWN",
-      },
-    });
-    if (cooldownLog) {
-      const elapsed = Math.floor((Date.now() - cooldownLog.windowStart.getTime()) / 1000);
-      const remaining = 25 - elapsed;
-      if (remaining > 0) {
-        return { success: false, message: "Please wait 25 seconds before requesting another OTP.", retryAfter: remaining };
-      } else {
-        await prisma.rateLimitLog.delete({ where: { id: cooldownLog.id } }).catch(() => {});
+    // DB Fallback cooldown check and set atomically
+    try {
+      await prisma.rateLimitLog.create({
+        data: {
+          identifier: phoneHash,
+          type: "PHONE_OTP_COOLDOWN",
+          count: 1,
+          windowStart: new Date(),
+        },
+      });
+    } catch (e) {
+      // Cooldown log already exists, retrieve remaining time
+      const cooldownLog = await prisma.rateLimitLog.findUnique({
+        where: {
+          identifier_type: {
+            identifier: phoneHash,
+            type: "PHONE_OTP_COOLDOWN",
+          },
+        },
+      });
+      if (cooldownLog) {
+        const elapsed = Math.floor((Date.now() - cooldownLog.windowStart.getTime()) / 1000);
+        const remaining = 25 - elapsed;
+        if (remaining > 0) {
+          return { success: false, message: "Please wait 25 seconds before requesting another OTP.", retryAfter: remaining };
+        } else {
+          // Reset cooldown if expired but not deleted
+          await prisma.rateLimitLog.update({
+            where: { id: cooldownLog.id },
+            data: { windowStart: new Date() },
+          });
+        }
       }
     }
   }
@@ -167,29 +193,11 @@ export async function generateOTP(phone: string) {
   // 5. Send via 2Factor.in with 2-attempt silent-fail retry
   await sendOTP(phone, otp);
 
-  // 6. Increment attempt counter (for rate limiting next request) and set cooldown
+  // 6. Increment attempt counter (for rate limiting next request)
   if (redisHealthy) {
-    await redis.set(COOLDOWN_KEY(phoneHash), "1", { ex: 25 });
     await redis.incr(ATTEMPT_KEY(phoneHash));
     await redis.expire(ATTEMPT_KEY(phoneHash), 900);
   } else {
-    // Set DB cooldown
-    await prisma.rateLimitLog.upsert({
-      where: {
-        identifier_type: {
-          identifier: phoneHash,
-          type: "PHONE_OTP_COOLDOWN",
-        },
-      },
-      update: { windowStart: new Date() },
-      create: {
-        identifier: phoneHash,
-        type: "PHONE_OTP_COOLDOWN",
-        count: 1,
-        windowStart: new Date(),
-      },
-    });
-
     await prisma.rateLimitLog.upsert({
       where: {
         identifier_type: {
@@ -213,7 +221,7 @@ export async function generateOTP(phone: string) {
 }
 
 // ── VERIFY OTP ───────────────────────────────────────────────
-export async function verifyOTP(phone: string, otp: string) {
+export async function verifyOTP(phone: string, otp: string, ip?: string, isDoctorRegister?: boolean) {
   const phoneHash = generatePhoneHash(phone);
   const redisHealthy = await isRedisHealthy();
   let storedHash: string | null = null;
@@ -270,6 +278,7 @@ export async function verifyOTP(phone: string, otp: string) {
 
   // Find or create User
   let user = await prisma.user.findUnique({ where: { phoneHash } });
+  const isNewUser = !user;
   if (!user) {
     user = await prisma.user.create({
       data: {
@@ -298,8 +307,45 @@ export async function verifyOTP(phone: string, otp: string) {
   });
 
   // Sign JWT session and set httpOnly cookie
-  const jwt = await createJWT({ userId: user.id, role: user.role, sessionId: session.id });
+  const jwt = await createJWT({
+    userId: user.id,
+    role: isDoctorRegister ? "DOCTOR_PENDING_GOOGLE_LINK" : user.role,
+    sessionId: session.id,
+  });
   setSessionCookie(jwt);
+
+  // Welcome actions for new sign-ups
+  if (isNewUser) {
+    const clientIp = ip || "anonymous";
+    await prisma.consentLog.create({
+      data: {
+        userId: user.id,
+        consentText: "By proceeding, you agree to JivniCare's Terms of Service and Privacy Policy. You consent to receiving updates via SMS/WhatsApp.",
+        consentVersion: "TERMS_V1.0",
+        ipAddress: clientIp,
+      },
+    }).catch((err) => console.error("Failed to create consent log:", err));
+
+    await prisma.notification.create({
+      data: {
+        userId: user.id,
+        title: "Welcome to JivniCare",
+        message: "Thank you for signing up with JivniCare. You can now book doctor checkup tokens online.",
+        type: NotificationType.SYSTEM,
+        status: NotificationStatus.SENT,
+      },
+    }).catch((err) => console.error("Failed to create welcome notification:", err));
+
+    createAuditLog({
+      userId: user.id,
+      role: user.role,
+      action: AuditAction.CREATE,
+      entityType: "USER",
+      entityId: user.id,
+      ipAddress: clientIp,
+      newValue: { phoneHash },
+    });
+  }
 
   return { success: true, user };
 }
@@ -465,6 +511,8 @@ export async function loginGoogleUser(email: string, googleId: string, name: str
       success: true,
       role: "DOCTOR",
       mfaRequired: false,
+      registrationComplete: doctor.registrationComplete,
+      verificationStatus: doctor.verificationStatus,
     };
   }
 
@@ -475,4 +523,263 @@ export async function loginGoogleUser(email: string, googleId: string, name: str
 export async function logout(sessionId: string) {
   await prisma.authSession.deleteMany({ where: { id: sessionId } });
   clearSessionCookie();
+}
+
+/**
+ * Retrieves the User record by ID, verifying bans and active state, and decrypts their phone
+ */
+export async function getUserProfile(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      phone: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
+      isBanned: true,
+      createdAt: true,
+    },
+  });
+
+  if (!user) {
+    throw new Error("NOT_FOUND");
+  }
+
+  if (user.isBanned || !user.isActive) {
+    throw new Error("SUSPENDED");
+  }
+
+  const decryptedPhone = user.phone ? decrypt(user.phone) : "";
+
+  return {
+    ...user,
+    phone: decryptedPhone,
+  };
+}
+
+/**
+ * Moves IP-level rate-limiting validation from routes to service layer
+ */
+export async function verifyIpRateLimit(ip: string): Promise<boolean> {
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  const ipLog = await prisma.rateLimitLog.findUnique({
+    where: {
+      identifier_type: {
+        identifier: ip,
+        type: "IP_OTP",
+      },
+    },
+  });
+
+  if (ipLog) {
+    if (ipLog.windowStart > oneHourAgo) {
+      if (ipLog.count >= 10) {
+        return false;
+      }
+      await prisma.rateLimitLog.update({
+        where: { id: ipLog.id },
+        data: { count: { increment: 1 } },
+      });
+    } else {
+      await prisma.rateLimitLog.update({
+        where: { id: ipLog.id },
+        data: { count: 1, windowStart: new Date() },
+      });
+    }
+  } else {
+    await prisma.rateLimitLog.create({
+      data: {
+        identifier: ip,
+        type: "IP_OTP",
+        count: 1,
+        windowStart: new Date(),
+      },
+    });
+  }
+  return true;
+}
+
+// ── UPDATE USER PROFILE ───────────────────────────────────────
+// NOTE: The email field is used only for notifications and uniqueness-checking.
+// Patient login remains strictly phone-OTP only via the jvc_session flow; the email field has no login/auth role.
+export async function updateUserProfile(
+  userId: string,
+  data: { name?: string; email?: string | null }
+) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    throw new Error("User not found.");
+  }
+  if (user.isBanned || !user.isActive) {
+    throw new Error("PATIENT_SUSPENDED");
+  }
+
+  if (data.email) {
+    const existing = await prisma.user.findFirst({
+      where: {
+        email: data.email,
+        id: { not: userId },
+      },
+    });
+    if (existing) {
+      throw new Error("EMAIL_IN_USE");
+    }
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      name: data.name,
+      email: data.email,
+    },
+    select: {
+      id: true,
+      phone: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
+    },
+  });
+
+  createAuditLog({
+    userId,
+    action: AuditAction.UPDATE,
+    entityType: "USER",
+    entityId: userId,
+    newValue: data,
+  });
+
+  const decryptedPhone = updated.phone ? decrypt(updated.phone) : "";
+
+  return {
+    ...updated,
+    phone: decryptedPhone,
+  };
+}
+
+// ── REQUEST DATA DELETION ─────────────────────────────────────
+export async function requestUserDataDeletion(userId: string, clientIp: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+  });
+
+  if (!user) {
+    throw new Error("NOT_FOUND");
+  }
+
+  if (user.isBanned || !user.isActive) {
+    throw new Error("USER_SUSPENDED");
+  }
+
+  const decryptedPhone = user.phone ? decrypt(user.phone) : "Unknown Phone";
+
+  // 1. Create audit log of deletion request
+  createAuditLog({
+    userId,
+    action: AuditAction.DELETE,
+    entityType: "USER",
+    entityId: userId,
+    ipAddress: clientIp,
+  });
+
+  // 2. Send email notification to admin
+  const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL;
+  if (!adminEmail) {
+    throw new Error("ADMIN_NOTIFICATION_EMAIL environment variable is not configured!");
+  }
+  const emailSubject = `[JivniCare] User Data Deletion Request - ${userId}`;
+  const emailContent = `
+    <h2>Data Deletion Request</h2>
+    <p>A patient has requested the deletion of their JivniCare account and all associated data.</p>
+    <ul>
+      <li><strong>User ID:</strong> ${userId}</li>
+      <li><strong>Phone:</strong> ${decryptedPhone}</li>
+      <li><strong>Email:</strong> ${user.email || "N/A"}</li>
+      <li><strong>Request IP:</strong> ${clientIp}</li>
+      <li><strong>Date:</strong> ${new Date().toISOString()}</li>
+    </ul>
+    <p>Under platform policy, this request must be processed and completed within 30 days.</p>
+  `;
+
+  await notificationService.sendEmail(adminEmail, emailSubject, emailContent);
+
+  return {
+    success: true,
+    message: "Deletion request received. 30 days processing.",
+  };
+}
+
+// ── LINK GOOGLE ACCOUNT ───────────────────────────────────────
+export async function linkGoogleAccount(userId: string, email: string, googleId: string) {
+  // Check if this Google account is already linked to another user
+  const existingGoogle = await prisma.user.findFirst({
+    where: {
+      googleId,
+      id: { not: userId },
+    },
+  });
+  if (existingGoogle) {
+    throw new Error("GOOGLE_ACCOUNT_ALREADY_LINKED");
+  }
+
+  const existingEmail = await prisma.user.findFirst({
+    where: {
+      email,
+      id: { not: userId },
+    },
+  });
+  if (existingEmail) {
+    throw new Error("GOOGLE_EMAIL_ALREADY_IN_USE");
+  }
+
+  // Update the user
+  const updatedUser = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      googleId,
+      email,
+      authProvider: "GOOGLE_OAUTH",
+    },
+  });
+
+  // Check if a doctor record exists for this user, and update its email too
+  const doctor = await prisma.doctor.findUnique({
+    where: { userId },
+  });
+  if (doctor) {
+    await prisma.doctor.update({
+      where: { id: doctor.id },
+      data: { email },
+    });
+  }
+
+  // Create audit log
+  createAuditLog({
+    userId,
+    role: updatedUser.role,
+    action: AuditAction.UPDATE,
+    entityType: "USER",
+    entityId: userId,
+    newValue: { googleId, email, authProvider: "GOOGLE_OAUTH" },
+  });
+
+  // Re-sign JWT session to promote them from DOCTOR_PENDING_GOOGLE_LINK to PATIENT role
+  const activeSession = await prisma.authSession.findFirst({
+    where: { userId, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (activeSession) {
+    const promotedJwt = await createJWT({
+      userId,
+      role: updatedUser.role, // normally PATIENT
+      sessionId: activeSession.id,
+    });
+    setSessionCookie(promotedJwt);
+  }
+
+  return updatedUser;
 }

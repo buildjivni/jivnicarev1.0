@@ -5,22 +5,16 @@ import { useRouter } from "next/navigation";
 import {
   Users,
   UserPlus,
-  Play,
   CheckCircle,
   XCircle,
   Activity,
-  ChevronRight,
   Loader2,
-  Calendar,
   MapPin,
   Phone,
-  Clock,
   ArrowRight,
-  CornerDownRight,
-  UserCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -50,6 +44,10 @@ export default function DoctorQueuePage() {
   const [walkinAddress, setWalkinAddress] = useState("");
   const [registeringWalkin, setRegisteringWalkin] = useState(false);
 
+  // Internal notes state
+  const [notesText, setNotesText] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
+
   const fetchQueueData = async () => {
     try {
       const docRes = await fetch("/api/doctor/profile");
@@ -74,6 +72,13 @@ export default function DoctorQueuePage() {
 
   useEffect(() => {
     fetchQueueData();
+
+    // 30 seconds silent polling
+    const interval = setInterval(() => {
+      fetchQueueData();
+    }, 30000);
+
+    return () => clearInterval(interval);
   }, [router]);
 
   // Extract selected queue based on tab
@@ -84,14 +89,45 @@ export default function DoctorQueuePage() {
   const activeToken = tokens.find(
     (t: any) => t.status === "CALLED" || t.status === "IN_CONSULTATION"
   );
+
+  // Sync internal notes text when active token changes
+  useEffect(() => {
+    setNotesText(activeToken?.internalNotes || "");
+  }, [activeToken?.id, activeToken?.internalNotes]);
+
+  const handleSaveNotes = async () => {
+    if (!activeToken) return;
+    setSavingNotes(true);
+    try {
+      const res = await fetch(`/api/doctor/tokens/${activeToken.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ internalNotes: notesText }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save notes");
+      toast.success("Notes saved successfully!");
+      // Update local queues state
+      setQueues((prevQueues) =>
+        prevQueues.map((q) => ({
+          ...q,
+          tokens: q.tokens.map((t: any) =>
+            t.id === activeToken.id ? { ...t, internalNotes: notesText } : t
+          ),
+        }))
+      );
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setSavingNotes(false);
+    }
+  };
   
   const upcomingTokens = tokens.filter(
     (t: any) => t.status === "READY" || t.status === "BOOKED" || t.status === "AWAITING_ARRIVAL" || t.status === "PAYMENT_PENDING"
   );
 
-  const completedTokens = tokens.filter(
-    (t: any) => t.status === "COMPLETED" || t.status === "NO_SHOW"
-  );
+
 
   // Advance queue handler (CALL_NEXT or COMPLETE)
   const handleAdvance = async (action: "CALL_NEXT" | "COMPLETE") => {
@@ -151,12 +187,13 @@ export default function DoctorQueuePage() {
       const res = await fetch("/api/doctor/queue/walkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: walkinName, phone: walkinPhone, address: walkinAddress }),
+        body: JSON.stringify({ name: walkinName, phone: walkinPhone, address: walkinAddress, type: currentTab }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to register walkin");
 
-      toast.success(`Walk-in registered! Token #${data.data.token.tokenNumber}`);
+      const prefix = currentTab === "EMERGENCY" ? "E" : "#";
+      toast.success(`Walk-in registered! Token ${prefix}${data.data.token.tokenNumber}`);
       setWalkinOpen(false);
       setWalkinName("");
       setWalkinPhone("");
@@ -318,7 +355,7 @@ export default function DoctorQueuePage() {
               </div>
               {activeToken && (
                 <Badge className="bg-[#1B3F6B] text-white hover:bg-[#1B3F6B]">
-                  Token #{activeToken.tokenNumber}
+                  Token {activeQueue.type === "EMERGENCY" ? "E" : "#"}{activeToken.tokenNumber}
                 </Badge>
               )}
             </CardHeader>
@@ -355,6 +392,32 @@ export default function DoctorQueuePage() {
                   <div className="p-3 bg-slate-50 rounded-xl flex justify-between items-center text-xs text-slate-500">
                     <span>Status: <span className="font-bold text-[#1B3F6B] uppercase">{activeToken.status.replace("_", " ")}</span></span>
                     <span>Issued At: {new Date(activeToken.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+
+                  {/* Internal Consultation Notes */}
+                  <div className="space-y-1.5 border-t border-slate-100 pt-3">
+                    <Label htmlFor="internalNotes" className="text-slate-600 font-semibold text-xs">
+                      Internal Consultation Notes (Not visible to patient)
+                    </Label>
+                    <textarea
+                      id="internalNotes"
+                      rows={3}
+                      value={notesText}
+                      onChange={(e) => setNotesText(e.target.value)}
+                      placeholder="Enter patient diagnosis, prescription info, or follow-up instructions..."
+                      className="w-full p-3 border border-slate-200 rounded-xl text-xs focus:ring-1 focus:ring-[#1B3F6B] focus:border-[#1B3F6B] outline-none resize-none"
+                    />
+                    <div className="flex justify-end">
+                      <Button
+                        size="sm"
+                        onClick={handleSaveNotes}
+                        disabled={savingNotes || notesText === (activeToken.internalNotes || "")}
+                        className="bg-[#1B3F6B] hover:bg-[#1B3F6B]/90 text-white rounded-lg text-[10px] font-semibold px-3 py-1.5"
+                      >
+                        {savingNotes ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                        Save Notes
+                      </Button>
+                    </div>
                   </div>
 
                   {/* Actions for current active token */}
@@ -429,7 +492,7 @@ export default function DoctorQueuePage() {
                 <div key={t.id} className="p-3.5 flex items-center justify-between hover:bg-slate-50">
                   <div className="flex items-center gap-3">
                     <div className="h-7 w-7 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-[#1B3F6B]">
-                      #{t.tokenNumber}
+                      {activeQueue.type === "EMERGENCY" ? "E" : "#"}{t.tokenNumber}
                     </div>
                     <div>
                       <div className="text-xs font-bold text-slate-800">

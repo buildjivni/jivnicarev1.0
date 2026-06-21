@@ -6,7 +6,12 @@ export async function GET(request: NextRequest) {
   const mockRole = nextUrl.searchParams.get("mockRole") || "admin";
 
   // Development mock login fallback if credentials are missing
-  if (!clientId || process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV === "production") {
+    if (!clientId) {
+      return NextResponse.redirect(new URL("/login?error=missing_client_id", nextUrl.origin));
+    }
+  } else {
+    // In development/test, fallback to mock login if CLIENT_ID is missing or requested
     const devRedirectUrl = new URL("/api/auth/google/callback", nextUrl.origin);
     devRedirectUrl.searchParams.set("code", `mock_code_${mockRole}`);
     return NextResponse.redirect(devRedirectUrl);

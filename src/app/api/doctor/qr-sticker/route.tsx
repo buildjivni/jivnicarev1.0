@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiError, ERRORS } from "@/lib/utils/api-response";
-import { prisma } from "@/lib/prisma";
+import { doctorService } from "@/lib/services/doctor.service";
+import { getSession } from "@/lib/utils/auth";
 import React from "react";
 import {
   Document,
   Page,
   Text,
-  View,
   Image,
   StyleSheet,
   pdf,
 } from "@react-pdf/renderer";
+
+export const dynamic = "force-dynamic";
 
 // Helper to fetch QR code from public API and convert to Base64
 async function getQrCodeBase64(slug: string): Promise<string> {
@@ -188,16 +190,15 @@ const BrandedQRDocument = ({
   </Document>
 );
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
-    const userId = request.headers.get("x-user-id");
-    if (!userId) {
+    const session = await getSession();
+    if (!session || (session.role !== "DOCTOR" && session.role !== "ADMIN")) {
       return apiError(ERRORS.UNAUTHORIZED, 401);
     }
+    const userId = session.userId;
 
-    const doctor = await prisma.doctor.findUnique({
-      where: { userId },
-    });
+    const doctor = await doctorService.getProfileByUserId(userId);
 
     if (!doctor) {
       return apiError("Doctor profile not found.", 404);

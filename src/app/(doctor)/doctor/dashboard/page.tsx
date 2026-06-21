@@ -8,16 +8,13 @@ import {
   Users,
   CheckCircle,
   XCircle,
-  FileText,
   Calendar,
-  Power,
   AlertTriangle,
   Loader2,
   QrCode,
-  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -28,8 +25,7 @@ export default function DoctorDashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [doctor, setDoctor] = useState<any>(null);
-  const [queues, setQueues] = useState<any[]>([]);
-  const [stats, setStats] = useState({ booked: 0, completed: 0, noshow: 0 });
+  const [stats, setStats] = useState({ booked: 0, completed: 0, noshow: 0, emergency: 0 });
   const [status, setStatus] = useState("OFFLINE");
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
@@ -54,6 +50,10 @@ export default function DoctorDashboardPage() {
       }
       const docData = await docRes.json();
       const doc = docData.data.doctor;
+      if (doc.verificationStatus !== "VERIFIED") {
+        router.push("/doctor/register");
+        return;
+      }
       setDoctor(doc);
       setStatus(doc.availabilityStatus);
 
@@ -62,16 +62,20 @@ export default function DoctorDashboardPage() {
       if (queueRes.ok) {
         const qData = await queueRes.json();
         const activeQueues = qData.data.queues || [];
-        setQueues(activeQueues);
-
         // Compute stats
         let booked = 0;
         let completed = 0;
         let noshow = 0;
+        let emergency = 0;
         activeQueues.forEach((q: any) => {
           q.tokens.forEach((t: any) => {
-            if (t.status === "BOOKED" || t.status === "AWAITING_ARRIVAL" || t.status === "READY" || t.status === "CALLED" || t.status === "IN_CONSULTATION") {
-              booked++;
+            const isActive = t.status === "BOOKED" || t.status === "AWAITING_ARRIVAL" || t.status === "READY" || t.status === "CALLED" || t.status === "IN_CONSULTATION" || t.status === "PAYMENT_PENDING";
+            if (isActive) {
+              if (q.type === "EMERGENCY") {
+                emergency++;
+              } else {
+                booked++;
+              }
             } else if (t.status === "COMPLETED") {
               completed++;
             } else if (t.status === "NO_SHOW") {
@@ -79,7 +83,7 @@ export default function DoctorDashboardPage() {
             }
           });
         });
-        setStats({ booked, completed, noshow });
+        setStats({ booked, completed, noshow, emergency });
       }
     } catch (err) {
       console.error("Dashboard data fetch error:", err);
@@ -213,7 +217,7 @@ export default function DoctorDashboardPage() {
         )}
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
           <Card className="rounded-2xl border-none shadow-sm bg-white">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-semibold text-slate-500">Awaiting Consultation</CardTitle>
@@ -246,6 +250,17 @@ export default function DoctorDashboardPage() {
               <p className="text-xs text-slate-400 mt-1">Patients marked absent</p>
             </CardContent>
           </Card>
+
+          <Card className="rounded-2xl border-none shadow-sm bg-white">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-semibold text-slate-500">Emergency Queue</CardTitle>
+              <AlertTriangle className="h-4 w-4 text-rose-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-extrabold text-rose-500">{stats.emergency}</div>
+              <p className="text-xs text-slate-400 mt-1">Active emergency cases</p>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Pricing & waiving premium banner */}
@@ -272,7 +287,7 @@ export default function DoctorDashboardPage() {
           {/* Main Action Links */}
           <Card className="rounded-2xl border-none shadow-sm bg-white p-6 space-y-4">
             <h3 className="font-bold text-slate-800 text-base">Quick Shortcuts</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <Button
                 onClick={() => router.push("/doctor/queue")}
                 className="bg-[#1B3F6B] hover:bg-[#1B3F6B]/90 text-white rounded-xl py-6 flex flex-col gap-1 items-center justify-center"
@@ -287,6 +302,14 @@ export default function DoctorDashboardPage() {
               >
                 <Calendar className="h-5 w-5 text-[#1B3F6B]" />
                 <span className="text-xs font-semibold">Update Schedule</span>
+              </Button>
+              <Button
+                onClick={() => router.push("/doctor/patients")}
+                variant="outline"
+                className="border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl py-6 flex flex-col gap-1 items-center justify-center"
+              >
+                <Users className="h-5 w-5 text-[#4E9B5A]" />
+                <span className="text-xs font-semibold">Patient History</span>
               </Button>
             </div>
           </Card>

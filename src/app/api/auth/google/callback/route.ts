@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
-import { loginGoogleUser } from "@/lib/services/auth.service";
+import { doctorService } from "@/lib/services/doctor.service";
+import { loginGoogleUser, linkGoogleAccount } from "@/lib/services/auth.service";
+import { getSession } from "@/lib/utils/auth";
 import * as Sentry from "@sentry/nextjs";
 
 export async function GET(request: NextRequest) {
@@ -18,6 +19,9 @@ export async function GET(request: NextRequest) {
 
     // 1. Check if mock login code is provided (for dev/test validation)
     if (code.startsWith("mock_code_")) {
+      if (process.env.NODE_ENV === "production") {
+        return NextResponse.redirect(new URL("/login?error=mock_forbidden", nextUrl.origin));
+      }
       const role = code.replace("mock_code_", "");
       if (role === "admin") {
         email = "admin@jivnicare.com";
@@ -25,7 +29,7 @@ export async function GET(request: NextRequest) {
         googleId = "mock_admin_google_id";
       } else {
         // Find any doctor in the database to log in as them
-        const doc = await prisma.doctor.findFirst();
+        const doc = await doctorService.getFirstDoctor();
         if (doc) {
           email = doc.email || "doctor@jivnicare.com";
           name = doc.name;
@@ -69,18 +73,40 @@ export async function GET(request: NextRequest) {
       googleId = googleUser.sub;
     }
 
-    // 3. Login User via Auth Service
+    // 3. Check if we have an active session (linking flow)
+    const session = await getSession();
+    if (session) {
+      try {
+        await linkGoogleAccount(session.userId, email, googleId);
+        return NextResponse.redirect(new URL("/doctor/register", nextUrl.origin));
+      } catch (err: any) {
+        console.error("Google linking error:", err);
+        return NextResponse.redirect(
+          new URL(`/doctor/register?error=${encodeURIComponent(err.message || "linking_failed")}`, nextUrl.origin)
+        );
+      }
+    }
+
+    // 4. Login User via Auth Service (standard login flow)
     const loginResult = await loginGoogleUser(email, googleId, name);
     if (!loginResult.success) {
       return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(loginResult.message || "forbidden")}`, nextUrl.origin));
     }
 
-    // 4. Route based on MFA requirement
+    // 5. Route based on MFA requirement and verification status
     if (loginResult.mfaRequired) {
       return NextResponse.redirect(new URL("/admin/totp", nextUrl.origin));
-    } else {
-      return NextResponse.redirect(new URL("/doctor/dashboard", nextUrl.origin));
     }
+
+    if (loginResult.role === "DOCTOR") {
+      if (loginResult.registrationComplete && loginResult.verificationStatus === "VERIFIED") {
+        return NextResponse.redirect(new URL("/doctor/dashboard", nextUrl.origin));
+      } else {
+        return NextResponse.redirect(new URL("/doctor/register", nextUrl.origin));
+      }
+    }
+
+    return NextResponse.redirect(new URL("/doctor/dashboard", nextUrl.origin));
   } catch (error) {
     console.error("Google OAuth callback error:", error);
     Sentry.captureException(error);

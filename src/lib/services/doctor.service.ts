@@ -197,6 +197,11 @@ export class DoctorService {
         },
       });
 
+      if (status === "AVAILABLE") {
+        const { bookingService } = await import("./booking.service");
+        await bookingService.dispatchWaitlist(doctorId, getLogicalDate(), tx);
+      }
+
       // 2. If OFFLINE: Resets availability and notifies all active booked patients for today
       if (status === "OFFLINE") {
         const logicalDate = getLogicalDate();
@@ -285,6 +290,121 @@ export class DoctorService {
     });
 
     return doc;
+  }
+
+  /**
+   * Fetches verified doctor profile by slug
+   */
+  async getDoctorBySlug(slug: string) {
+    return prisma.doctor.findFirst({
+      where: {
+        slug,
+        verificationStatus: "VERIFIED",
+        canShowOnPublic: true,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        speciality: true,
+        clinicName: true,
+        clinicAddress: true,
+        clinicCity: true,
+        clinicDistrict: true,
+        clinicPhotos: true,
+        consultationFee: true,
+        availabilityStatus: true,
+        isAcceptingBookings: true,
+        partnerTier: true,
+        profilePhoto: true,
+        bio: true,
+        gender: true,
+        languages: true,
+        isEmergencyEnabled: true,
+        emergencyFee: true,
+        qualifications: true,
+        experienceYears: true,
+        expertiseTags: true,
+        weeklySchedule: true,
+      },
+    });
+  }
+
+  /**
+   * Fetches doctor profile by userId
+   */
+  async getProfileByUserId(userId: string) {
+    return prisma.doctor.findUnique({
+      where: { userId },
+      include: {
+        user: true,
+      },
+    });
+  }
+
+  /**
+   * Updates allowed doctor profile fields by userId
+   */
+  async updateProfileByUserId(userId: string, allowedUpdates: any) {
+    const doctor = await prisma.doctor.findUnique({ 
+      where: { userId },
+      include: { user: true }
+    });
+    if (!doctor) {
+      throw new Error("Doctor profile not found.");
+    }
+    if (doctor.user.isBanned || !doctor.user.isActive) {
+      throw new Error("DOCTOR_SUSPENDED");
+    }
+
+    const updatedDoctor = await prisma.doctor.update({
+      where: { id: doctor.id },
+      data: allowedUpdates,
+    });
+
+    createAuditLog({
+      userId: doctor.userId,
+      role: Role.DOCTOR,
+      action: AuditAction.UPDATE,
+      entityType: "Doctor",
+      entityId: doctor.id,
+      newValue: { fieldsUpdated: Object.keys(allowedUpdates) },
+    });
+
+    return updatedDoctor;
+  }
+
+  /**
+   * Creates a DoctorRequest lead capture
+   */
+  async createDoctorRequest(payload: { name: string; phone: string; district: string; speciality: string }) {
+    const districtRecord = await prisma.district.findFirst({
+      where: {
+        name: { equals: payload.district, mode: "insensitive" },
+        isActive: true,
+      },
+    });
+
+    if (!districtRecord) {
+      throw new Error("INVALID_DISTRICT");
+    }
+
+    return prisma.doctorRequest.create({
+      data: {
+        name: payload.name,
+        phone: payload.phone,
+        district: payload.district,
+        speciality: payload.speciality,
+      },
+    });
+  }
+
+  /**
+   * Fetches the first doctor record (for developer mock login)
+   */
+  async getFirstDoctor() {
+    return prisma.doctor.findFirst();
   }
 }
 

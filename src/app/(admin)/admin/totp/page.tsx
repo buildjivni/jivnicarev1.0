@@ -13,7 +13,6 @@ import toast from "react-hot-toast";
 export default function AdminTotpPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [sessionUser, setSessionUser] = useState<any>(null);
   const [isSetup, setIsSetup] = useState(false);
   const [setupData, setSetupData] = useState<any>(null);
   const [totpCode, setTotpCode] = useState("");
@@ -25,6 +24,7 @@ export default function AdminTotpPage() {
   const [useBackupMode, setUseBackupMode] = useState(false);
   const [backupCodeInput, setBackupCodeInput] = useState("");
   const [copied, setCopied] = useState(false);
+  const [checkboxTicked, setCheckboxTicked] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -35,10 +35,6 @@ export default function AdminTotpPage() {
           router.push("/admin/login");
           return;
         }
-        const meData = await meRes.json();
-        const user = meData.data.user;
-        setSessionUser(user);
-
         // Fetch setup config. If it returns 400 with "already configured", then totp is enabled.
         const setupRes = await fetch("/api/auth/setup-totp");
         if (setupRes.ok) {
@@ -190,11 +186,30 @@ export default function AdminTotpPage() {
               </Button>
             </div>
 
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-xs font-semibold flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>Save these codes. They are shown ONLY once and cannot be recovered.</span>
+            </div>
+
+            <div className="flex items-center gap-2 py-2">
+              <input
+                id="save-confirm-checkbox"
+                type="checkbox"
+                checked={checkboxTicked}
+                onChange={(e) => setCheckboxTicked(e.target.checked)}
+                className="h-4 w-4 accent-[#1B3F6B] rounded border-slate-300"
+              />
+              <Label htmlFor="save-confirm-checkbox" className="text-xs text-slate-600 font-semibold cursor-pointer select-none">
+                I have saved my backup codes securely.
+              </Label>
+            </div>
+
             <Button
               onClick={() => router.push("/admin")}
-              className="w-full bg-[#1B3F6B] hover:bg-[#1B3F6B]/90 text-white rounded-xl py-6 font-semibold"
+              disabled={!checkboxTicked}
+              className="w-full bg-[#1B3F6B] hover:bg-[#1B3F6B]/90 text-white rounded-xl py-6 font-semibold disabled:opacity-50"
             >
-              I have saved these, go to Dashboard
+              Proceed to Dashboard
             </Button>
           </CardContent>
         </Card>

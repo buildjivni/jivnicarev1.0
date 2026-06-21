@@ -1,14 +1,13 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { searchService } from "@/lib/services/search.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import * as Sentry from "@sentry/nextjs";
 
-export async function GET(request: NextRequest) {
+export const dynamic = "force-dynamic";
+
+export async function GET(_request: NextRequest) {
   try {
-    const specialities = await prisma.speciality.findMany({
-      where: { isActive: true },
-      orderBy: { sortOrder: "asc" },
-    });
+    const specialities = await searchService.getActiveSpecialities();
     return apiSuccess({ specialities });
   } catch (error) {
     console.error("public specialities fetch error:", error);

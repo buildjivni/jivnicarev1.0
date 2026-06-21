@@ -8,4 +8,5 @@ export const sendOtpSchema = z.object({
 export const verifyOtpSchema = z.object({
   phone: z.string().regex(/^\+91[6-9]\d{9}$/, "Invalid Indian mobile number format"),
   otp: z.string().length(6, "OTP must be exactly 6 digits"),
+  isDoctor: z.boolean().optional(),
 });

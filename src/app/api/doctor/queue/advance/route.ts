@@ -1,51 +1,39 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { queueService } from "@/lib/services/queue.service";
-import { prisma } from "@/lib/prisma";
+import { getSession } from "@/lib/utils/auth";
+import { advanceQueueSchema } from "@/lib/schemas/doctor.schema";
 
 export async function PUT(request: NextRequest) {
   try {
-    const userId = request.headers.get("x-user-id");
-    if (!userId) {
+    const session = await getSession();
+    if (!session || (session.role !== "DOCTOR" && session.role !== "ADMIN")) {
       return apiError(ERRORS.UNAUTHORIZED, 401);
     }
-
-    const doctor = await prisma.doctor.findUnique({
-      where: { userId },
-    });
-
-    if (!doctor) {
-      return apiError("Doctor profile not found.", 404);
-    }
+    const userId = session.userId;
 
     const body = await request.json();
-    const { queueId, action } = body;
+    const result = advanceQueueSchema.safeParse(body);
 
-    if (!queueId) {
-      return apiError("Queue ID is required.", 400);
+    if (!result.success) {
+      return apiError(result.error.errors[0]?.message || "Invalid input provided.", 400);
     }
 
-    if (action !== "CALL_NEXT" && action !== "COMPLETE") {
-      return apiError("Invalid action. Must be CALL_NEXT or COMPLETE.", 400);
-    }
+    const { queueId, action } = result.data;
 
-    // Verify that the queue belongs to this doctor
-    const queue = await prisma.dailyQueue.findUnique({
-      where: { id: queueId },
-    });
-
-    if (!queue) {
-      return apiError("Queue not found.", 404);
-    }
-
-    if (queue.doctorId !== doctor.id) {
-      return apiError(ERRORS.FORBIDDEN, 403);
-    }
-
-    const res = await queueService.advance(queueId, action, userId);
+    const res = await queueService.advanceQueueForDoctor(userId, queueId, action);
     return apiSuccess(res);
   } catch (error: any) {
     console.error("Queue advance error:", error);
+    if (error.message === "Doctor profile not found.") {
+      return apiError("Doctor profile not found.", 404);
+    }
+    if (error.message === "Queue not found.") {
+      return apiError("Queue not found.", 404);
+    }
+    if (error.message === "FORBIDDEN" || error.message === "OPERATOR_SUSPENDED") {
+      return apiError("Account suspended.", 403);
+    }
     return apiError(error.message || ERRORS.SERVER_ERROR, 500);
   }
 }

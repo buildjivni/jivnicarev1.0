@@ -4,15 +4,6 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
   Shield,
-  Activity,
-  Users,
-  AlertCircle,
-  Clock,
-  CheckCircle,
-  FileText,
-  DollarSign,
-  TrendingUp,
-  Search,
   UserPlus,
   Loader2,
   ChevronRight,

@@ -4,13 +4,20 @@ const ENCRYPTION_ALGORITHM = "aes-256-gcm";
 
 // Helper to derive a 32-byte key from our environment variable
 function getEncryptionKey(): Buffer {
-  const secret = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || "fallback-jivnicare-encryption-secret-key-2026";
+  const secret = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error("Cryptography failed: ENCRYPTION_KEY / JWT_SECRET environment variable is missing!");
+  }
   return crypto.createHash("sha256").update(secret).digest();
 }
 
 // Helper to get the HMAC secret key
 function getHmacSecret(): string {
-  return process.env.HMAC_SECRET_KEY || process.env.JWT_SECRET || "fallback-jivnicare-hmac-secret-key-2026";
+  const secret = process.env.HMAC_SECRET_KEY || process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error("Cryptography failed: HMAC_SECRET_KEY / JWT_SECRET environment variable is missing!");
+  }
+  return secret;
 }
 
 /**

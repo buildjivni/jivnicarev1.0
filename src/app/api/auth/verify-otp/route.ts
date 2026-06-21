@@ -13,10 +13,11 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       return apiError("Invalid input provided.", 400);
     }
-    const { phone, otp } = result.data;
+    const { phone, otp, isDoctor } = result.data;
 
     // 2. Verify OTP
-    const verifyResult = await verifyOTP(phone, otp);
+    const ip = request.ip || request.headers.get("x-forwarded-for") || "anonymous";
+    const verifyResult = await verifyOTP(phone, otp, ip, isDoctor);
     if (!verifyResult.success) {
       return apiError(verifyResult.message || ERRORS.INVALID_OTP, 400);
     }

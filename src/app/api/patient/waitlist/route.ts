@@ -3,10 +3,15 @@ import { joinWaitlistSchema } from "@/lib/schemas/booking.schema";
 import { bookingService } from "@/lib/services/booking.service";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import * as Sentry from "@sentry/nextjs";
+import { getSession } from "@/lib/utils/auth";
 
 export async function POST(request: NextRequest) {
   try {
-    const userId = request.headers.get("x-user-id") || undefined;
+    const session = await getSession();
+    if (!session || session.role !== "PATIENT") {
+      return apiError(ERRORS.UNAUTHORIZED, 401);
+    }
+    const userId = session.userId;
     const body = await request.json();
 
     // 1. Validate Input
@@ -28,7 +33,10 @@ export async function POST(request: NextRequest) {
         name: waitlist.name,
       },
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error.message === "PATIENT_SUSPENDED") {
+      return apiError("Account suspended.", 403);
+    }
     console.error("join waitlist error:", error);
     Sentry.captureException(error);
     return apiError(ERRORS.SERVER_ERROR, 500);

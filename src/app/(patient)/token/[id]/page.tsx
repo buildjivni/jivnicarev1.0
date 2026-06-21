@@ -2,13 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
-import { Clock, MapPin, AlertCircle, CheckCircle2, ChevronRight, Ban, RefreshCcw } from "lucide-react";
+import { MapPin, AlertCircle, CheckCircle2, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import Header from "@/components/shared/Header";
 import Footer from "@/components/shared/Footer";
 import { TokenStatus } from "@prisma/client";
+import { getETARangeString } from "@/lib/utils/eta";
+import { usePWAInstall } from "@/lib/hooks/usePWAInstall";
+
 
 export default function TokenTrackingPage() {
   const params = useParams();
@@ -20,10 +22,38 @@ export default function TokenTrackingPage() {
   const [error, setError] = useState("");
   const [cancelling, setCancelling] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  // PWA installation states
+  const { isInstallable, isIOS, triggerInstall } = usePWAInstall();
+  const [showIosSheet, setShowIosSheet] = useState(false);
+  const [showPwaBanner, setShowPwaBanner] = useState(false);
+
+  useEffect(() => {
+    if (isInstallable || (isIOS && !window.matchMedia("(display-mode: standalone)").matches)) {
+      setShowPwaBanner(true);
+    }
+  }, [isInstallable, isIOS]);
+
+  const handleInstallClick = async () => {
+    if (isIOS) {
+      setShowIosSheet(true);
+    } else {
+      await triggerInstall();
+    }
+  };
 
   // Poll for token status updates every 30 seconds
   const fetchTokenStatus = async (showLoading = false) => {
-    if (showLoading) setLoading(true);
+    if (showLoading) {
+      setLoading(true);
+      setError("");
+    } else {
+      setIsSyncing(true);
+    }
+    setSyncError(false);
     try {
       const res = await fetch(`/api/patient/tokens/${tokenId}`);
       if (!res.ok) {
@@ -36,14 +66,25 @@ export default function TokenTrackingPage() {
       const json = await res.json();
       if (json.success) {
         setData(json.data);
+        setLastUpdated(new Date());
+        setError(""); // Clear error if it succeeded
       } else {
-        setError(json.error || "Token details unavailable");
+        if (showLoading || !data) {
+          setError(json.error || "Token details unavailable");
+        } else {
+          setSyncError(true);
+        }
       }
     } catch (err) {
-      console.error(err);
-      setError("Unable to sync queue position. Check connection.");
+      console.error("Background token sync error:", err);
+      if (showLoading || !data) {
+        setError("Unable to sync queue position. Check connection.");
+      } else {
+        setSyncError(true);
+      }
     } finally {
       setLoading(false);
+      setIsSyncing(false);
     }
   };
 
@@ -165,17 +206,37 @@ export default function TokenTrackingPage() {
           
           {/* Header row: Status Badge */}
           <div className="flex justify-between items-center w-full">
-            <span className="text-xs text-content-muted font-medium">Live Token tracking</span>
-            <span className={`text-[10px] uppercase font-bold tracking-wider py-0.5 px-3 rounded-full ${currentStatus.color}`}>
-              {currentStatus.label}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-content-muted font-medium">Live Token tracking</span>
+              {isSyncing && (
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-blue opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-blue"></span>
+                </span>
+              )}
+              {syncError && (
+                <span className="text-[10px] font-semibold text-status-warning animate-pulse">
+                  (Sync offline)
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <span className={`text-[10px] uppercase font-bold tracking-wider py-0.5 px-3 rounded-full ${currentStatus.color}`}>
+                {currentStatus.label}
+              </span>
+              {lastUpdated && (
+                <span className="text-[9px] text-content-muted mt-0.5">
+                  Refreshed: {lastUpdated.toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Large Hero Token Number */}
           <div className="flex flex-col items-center">
             <span className="text-xs font-semibold text-content-secondary uppercase tracking-widest">Your Token</span>
             <strong className="text-6xl md:text-7xl font-display font-bold text-brand-blue mt-2 leading-none">
-              #{token.tokenNumber}
+              {queue.type === "EMERGENCY" ? "E" : "#"}{token.tokenNumber}
             </strong>
           </div>
 
@@ -202,10 +263,23 @@ export default function TokenTrackingPage() {
                 <div className="flex flex-col bg-surface-primary p-3 rounded-xl border border-border/60">
                   <span className="text-xs text-content-secondary">Currently Serving</span>
                   <span className="text-xl font-bold text-content-primary mt-1">
-                    {currentlyServing > 0 ? `#${currentlyServing}` : "--"}
+                    {currentlyServing > 0 ? `${queue.type === "EMERGENCY" ? "E" : "#"}${currentlyServing}` : "--"}
                   </span>
                 </div>
               </div>
+
+              {/* Estimated Arrival Window */}
+              {token.status !== TokenStatus.CALLED && token.status !== TokenStatus.IN_CONSULTATION && (
+                <div className="bg-brand-blue/5 border border-brand-blue/10 rounded-xl p-3.5 flex flex-col gap-1 text-center animate-in fade-in duration-200">
+                  <span className="text-xs text-content-secondary font-semibold uppercase tracking-wider">Estimated Arrival Window</span>
+                  <span className="text-base font-bold text-brand-blue">
+                    {getETARangeString(patientsAhead)}
+                  </span>
+                  <span className="text-[10px] text-content-muted leading-none">
+                    *Estimated wait time. Subject to change as patients progress.
+                  </span>
+                </div>
+              )}
 
               {/* Progress Bar */}
               <div className="flex flex-col gap-1.5 text-left">
@@ -254,15 +328,21 @@ export default function TokenTrackingPage() {
         </div>
 
         {/* PWA Install Promo Box */}
-        <div className="bg-gradient-to-r from-brand-blue/10 to-brand-green/10 border border-brand-blue/15 rounded-xl p-5 shadow-sm flex items-center justify-between gap-4">
-          <div className="flex flex-col gap-1">
-            <h4 className="text-sm font-semibold text-content-primary">Install JivniCare App</h4>
-            <p className="text-xs text-content-secondary">Track your token directly from your home screen.</p>
+        {showPwaBanner && (
+          <div className="bg-gradient-to-r from-brand-blue/10 to-brand-green/10 border border-brand-blue/15 rounded-xl p-5 shadow-sm flex items-center justify-between gap-4 animate-in fade-in duration-200">
+            <div className="flex flex-col gap-1">
+              <h4 className="text-sm font-semibold text-content-primary">Install JivniCare App</h4>
+              <p className="text-xs text-content-secondary">Track your token directly from your home screen.</p>
+            </div>
+            <Button
+              onClick={handleInstallClick}
+              size="sm"
+              className="bg-brand-blue hover:bg-brand-blue-hover text-white text-xs px-4 border-none"
+            >
+              Install
+            </Button>
           </div>
-          <Button size="sm" className="bg-brand-blue hover:bg-brand-blue-hover text-white text-xs px-4 border-none">
-            Install
-          </Button>
-        </div>
+        )}
 
         {/* Cancel Button */}
         {isCancellable && (
@@ -303,6 +383,36 @@ export default function TokenTrackingPage() {
                 {cancelling ? "Cancelling..." : "Yes, Cancel"}
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* iOS PWA Instructions Dialog */}
+      {showIosSheet && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-surface-card border border-border rounded-t-2xl sm:rounded-2xl w-full max-w-sm shadow-2xl p-6 relative animate-in slide-in-from-bottom duration-300 sm:zoom-in-95">
+            <h3 className="text-lg font-bold text-content-primary">Install JivniCare on iOS</h3>
+            <p className="text-sm text-content-secondary mt-2 leading-relaxed">
+              Safari browser supports adding JivniCare directly to your home screen for rapid tracking:
+            </p>
+            
+            <div className="mt-4 space-y-3.5 text-sm text-content-secondary">
+              <div className="flex items-center gap-3">
+                <span className="flex-shrink-0 w-6 h-6 bg-brand-blue/10 text-brand-blue font-bold rounded-full flex items-center justify-center text-xs">1</span>
+                <span>Tap the **Share** button at the bottom of Safari.</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="flex-shrink-0 w-6 h-6 bg-brand-blue/10 text-brand-blue font-bold rounded-full flex items-center justify-center text-xs">2</span>
+                <span>Scroll down and select **&ldquo;Add to Home Screen&rdquo;**.</span>
+              </div>
+            </div>
+            
+            <Button
+              onClick={() => setShowIosSheet(false)}
+              className="w-full bg-brand-blue hover:bg-brand-blue-hover text-white mt-6 rounded-xl border-none"
+            >
+              Got It
+            </Button>
           </div>
         </div>
       )}

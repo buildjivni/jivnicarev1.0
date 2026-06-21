@@ -1,61 +1,51 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { queueService } from "@/lib/services/queue.service";
-import { prisma } from "@/lib/prisma";
 import { TokenStatus } from "@prisma/client";
+import { getSession } from "@/lib/utils/auth";
+import { transitionTokenSchema } from "@/lib/schemas/doctor.schema";
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const userId = request.headers.get("x-user-id");
-    if (!userId) {
+    const session = await getSession();
+    if (!session || session.role !== "DOCTOR") {
       return apiError(ERRORS.UNAUTHORIZED, 401);
     }
-
-    const doctor = await prisma.doctor.findUnique({
-      where: { userId },
-    });
-
-    if (!doctor) {
-      return apiError("Doctor profile not found.", 404);
-    }
+    const userId = session.userId;
 
     const tokenId = params.id;
     const body = await request.json();
-    const { fromStatus, toStatus } = body;
+    const result = transitionTokenSchema.safeParse(body);
 
-    if (!fromStatus || !toStatus) {
-      return apiError("Both fromStatus and toStatus are required.", 400);
+    if (!result.success) {
+      return apiError(result.error.errors[0]?.message || "Invalid input provided.", 400);
     }
 
-    // Verify token belongs to this doctor
-    const token = await prisma.queueToken.findUnique({
-      where: { id: tokenId },
-      include: {
-        queue: true,
-      },
-    });
+    const { fromStatus, toStatus, internalNotes } = result.data;
 
-    if (!token) {
-      return apiError("Token not found.", 404);
-    }
-
-    if (token.queue.doctorId !== doctor.id) {
-      return apiError(ERRORS.FORBIDDEN, 403);
-    }
-
-    const updatedToken = await queueService.transition(
+    const updatedToken = await queueService.transitionTokenForDoctor(
+      userId,
       tokenId,
-      fromStatus as TokenStatus,
-      toStatus as TokenStatus,
-      userId
+      fromStatus as TokenStatus | undefined,
+      toStatus as TokenStatus | undefined,
+      internalNotes
     );
 
     return apiSuccess({ token: updatedToken });
   } catch (error: any) {
     console.error("Token transition error:", error);
+    if (error.message === "Doctor profile not found.") {
+      return apiError("Doctor profile not found.", 404);
+    }
+    if (error.message === "Token not found.") {
+      return apiError("Token not found.", 404);
+    }
+    if (error.message === "FORBIDDEN" || error.message === "OPERATOR_SUSPENDED") {
+      return apiError("Account suspended.", 403);
+    }
     return apiError(error.message || ERRORS.SERVER_ERROR, 500);
   }
 }

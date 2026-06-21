@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { Shield, Loader2, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import toast from "react-hot-toast";
+
 
 export default function AdminLoginPage() {
   const [loading, setLoading] = useState(false);

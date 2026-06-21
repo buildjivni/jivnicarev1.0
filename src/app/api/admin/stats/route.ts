@@ -1,63 +1,23 @@
 import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
-import { prisma } from "@/lib/prisma";
+import { adminService } from "@/lib/services/admin.service";
 import { getLogicalDate } from "@/lib/utils/logical-date";
-import { AvailabilityStatus, QueueType } from "@prisma/client";
+import { getSession } from "@/lib/utils/auth";
 
-export async function GET(request: NextRequest) {
+export const dynamic = "force-dynamic";
+
+export async function GET(_request: NextRequest) {
   try {
-    const userRole = request.headers.get("x-user-role");
-    if (userRole !== "ADMIN") {
+    const session = await getSession();
+    if (!session || session.role !== "ADMIN") {
       return apiError(ERRORS.FORBIDDEN, 403);
     }
 
     const logicalDate = getLogicalDate();
-
-    // 1. Online Doctors
-    const onlineDoctors = await prisma.doctor.count({
-      where: {
-        availabilityStatus: AvailabilityStatus.AVAILABLE,
-        deletedAt: null,
-      },
-    });
-
-    // 2. Daily queues today
-    const queueCount = await prisma.dailyQueue.count({
-      where: {
-        date: logicalDate,
-      },
-    });
-
-    // 3. Emergency queues today
-    const emergencyQueueCount = await prisma.dailyQueue.count({
-      where: {
-        date: logicalDate,
-        type: QueueType.EMERGENCY,
-      },
-    });
-
-    // 4. Booking counts today
-    const bookingsCount = await prisma.queueToken.count({
-      where: {
-        queue: {
-          date: logicalDate,
-        },
-      },
-    });
-
-    // 5. Pending verifications
-    const pendingVerifications = await prisma.doctor.count({
-      where: {
-        verificationStatus: "PENDING_REVIEW",
-      },
-    });
+    const stats = await adminService.getSystemStats();
 
     return apiSuccess({
-      onlineDoctors,
-      queueCount,
-      emergencyQueueCount,
-      bookingsCount,
-      pendingVerifications,
+      ...stats,
       logicalDate,
     });
   } catch (error: any) {

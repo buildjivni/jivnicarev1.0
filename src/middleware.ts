@@ -4,6 +4,8 @@ import { verifyJWT } from "@/lib/utils/auth";
 const PUBLIC = [
   "/",
   "/login",
+  "/otp",
+  "/search",
   "/doctors",
   "/api/public",
   "/api/auth", // Allows all callback/signin routes and OTP endpoints
@@ -15,7 +17,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Allow public routes
-  if (PUBLIC.some((p) => pathname.startsWith(p))) {
+  if (PUBLIC.some((p) => p === "/" ? pathname === "/" : pathname.startsWith(p))) {
     return addSecurityHeaders(NextResponse.next());
   }
 
@@ -27,6 +29,35 @@ export async function middleware(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // 1. Guard for Doctor pending Google link
+  if (session.role === "DOCTOR_PENDING_GOOGLE_LINK") {
+    if (
+      pathname !== "/doctor/register" &&
+      !pathname.startsWith("/api/auth") &&
+      pathname !== "/api/doctor/register"
+    ) {
+      return pathname.startsWith("/api/")
+        ? NextResponse.json({ error: "Forbidden" }, { status: 403 })
+        : NextResponse.redirect(new URL("/doctor/register", request.url));
+    }
+    return addSecurityHeaders(NextResponse.next());
+  }
+
+  // 2. Guard for Admin pending MFA
+  if (session.role === "ADMIN_PENDING_MFA") {
+    if (pathname !== "/admin/totp" && !pathname.startsWith("/api/auth")) {
+      return pathname.startsWith("/api/")
+        ? NextResponse.json({ error: "Forbidden" }, { status: 403 })
+        : NextResponse.redirect(new URL("/admin/totp", request.url));
+    }
+    return addSecurityHeaders(NextResponse.next());
+  }
+
+  // Redirect fully authenticated Admin away from TOTP setup/verify page
+  if (session.role === "ADMIN" && pathname === "/admin/totp") {
+    return NextResponse.redirect(new URL("/admin", request.url));
   }
 
   // Role guards
@@ -54,13 +85,7 @@ export async function middleware(request: NextRequest) {
       : NextResponse.redirect(new URL("/login", request.url));
   }
 
-  // Inject session into headers
-  const headers = new Headers(request.headers);
-  headers.set("x-user-id", session.userId);
-  headers.set("x-user-role", session.role);
-  headers.set("x-session-id", session.sessionId);
-
-  return addSecurityHeaders(NextResponse.next({ request: { headers } }));
+  return addSecurityHeaders(NextResponse.next());
 }
 
 function addSecurityHeaders(response: NextResponse) {

@@ -2,15 +2,22 @@ import { NextRequest } from "next/server";
 import { apiSuccess, apiError, ERRORS } from "@/lib/utils/api-response";
 import { adminService } from "@/lib/services/admin.service";
 import { PartnerTier } from "@prisma/client";
+import { getSession } from "@/lib/utils/auth";
+import { adminPricingSchema } from "@/lib/schemas/admin.schema";
 
 export async function PUT(request: NextRequest) {
   try {
-    const userRole = request.headers.get("x-user-role");
-    if (userRole !== "ADMIN") {
+    const session = await getSession();
+    if (!session || session.role !== "ADMIN") {
       return apiError(ERRORS.FORBIDDEN, 403);
     }
 
     const body = await request.json();
+    const parsed = adminPricingSchema.safeParse(body);
+    if (!parsed.success) {
+      return apiError(parsed.error.errors[0].message, 400);
+    }
+
     const {
       doctorId,
       monthlyFee,
@@ -18,20 +25,12 @@ export async function PUT(request: NextRequest) {
       discountPercent,
       partnerTier,
       freeUntil,
-    } = body;
-
-    if (!doctorId) {
-      return apiError("Doctor ID is required.", 400);
-    }
-
-    if (partnerTier && !Object.values(PartnerTier).includes(partnerTier)) {
-      return apiError("Invalid partner tier.", 400);
-    }
+    } = parsed.data;
 
     const updatedPricing = await adminService.configurePricing(doctorId, {
-      monthlyFee: monthlyFee !== undefined ? Number(monthlyFee) : undefined,
-      perBookingFee: perBookingFee !== undefined ? Number(perBookingFee) : undefined,
-      discountPercent: discountPercent !== undefined ? Number(discountPercent) : undefined,
+      monthlyFee,
+      perBookingFee,
+      discountPercent,
       partnerTier: partnerTier as PartnerTier,
       freeUntil: freeUntil ? new Date(freeUntil) : undefined,
     });

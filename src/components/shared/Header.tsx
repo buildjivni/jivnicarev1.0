@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
-import { MapPin, User, LogOut, LayoutDashboard, Menu, X } from "lucide-react";
+import { MapPin, User, LogOut, Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function Header() {
@@ -102,7 +102,7 @@ export default function Header() {
           </div>
 
           <Link
-            href="/doctors"
+            href="/search"
             className={`text-sm font-medium transition-colors hover:text-brand-blue ${
               pathname.startsWith("/doctors") || pathname === "/search"
                 ? "text-brand-blue font-semibold"
@@ -189,7 +189,7 @@ export default function Header() {
       {mobileMenuOpen && (
         <div className="absolute top-14 left-0 w-full bg-surface-card border-b border-border shadow-lg md:hidden py-4 px-6 flex flex-col gap-4 animate-in slide-in-from-top-4 duration-200">
           <Link
-            href="/doctors"
+            href="/search"
             onClick={() => setMobileMenuOpen(false)}
             className="text-base font-medium text-content-primary hover:text-brand-blue"
           >

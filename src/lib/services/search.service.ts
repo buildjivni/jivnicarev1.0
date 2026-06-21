@@ -81,9 +81,6 @@ export class SearchService {
 
     // 3. PostgreSQL Query (Layer 2)
     // Build Prisma query to fetch candidates (Safety Cap: fetch max 500)
-    const qTrimmed = query.trim().toLowerCase();
-    const isDirectIdMatch = qTrimmed.startsWith("jvc");
-
     const whereConditions: any = {
       clinicDistrict: { equals: filters.district, mode: "insensitive" },
       verificationStatus: "VERIFIED",
@@ -101,11 +98,8 @@ export class SearchService {
         { clinicCity: { contains: query, mode: "insensitive" } },
         { diseases: { has: query } },
         { procedures: { has: query } },
+        { internalDoctorId: { contains: query, mode: "insensitive" } },
       ];
-
-      if (isDirectIdMatch) {
-        orConditions.push({ internalDoctorId: { equals: query, mode: "insensitive" } });
-      }
 
       if (mappedSpeciality) {
         orConditions.push({ speciality: { equals: mappedSpeciality, mode: "insensitive" } });
@@ -338,6 +332,26 @@ export class SearchService {
       .catch((err) => {
         console.error("Failed to log search query:", err);
       });
+  }
+
+  /**
+   * Fetches active districts
+   */
+  async getActiveDistricts() {
+    return prisma.district.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+    });
+  }
+
+  /**
+   * Fetches active specialities
+   */
+  async getActiveSpecialities() {
+    return prisma.speciality.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: "asc" },
+    });
   }
 }
 
